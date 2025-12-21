@@ -297,7 +297,6 @@ void ImportFunction::print(ostream& os, int tab) {
 
 void ImportFunction::compile(vector<Code>& ofs, map<string, int>& vars,
                              map<string, int>& functions, int offset) {
-    cerr << "**IMPORT** " << _id + ".bin" << endl;
     ifstream ifs(_id + ".bin");
     int of = offset + ofs.size();
     char str[256];
