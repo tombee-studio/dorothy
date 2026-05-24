@@ -11,6 +11,7 @@ test:
 		g++ -c --std=c++17 src/lexer.cpp -o obj/lexer.o
 		g++ -c --std=c++17 src/ast.cpp -o obj/ast.o
 		g++ -c --std=c++17 src/parser.cpp -o obj/parser.o
+		g++ -c --std=c++17 src/llvm_gen.cpp -o obj/llvm_gen.o
 		g++ --std=c++17 unittest/code.cpp obj/*.o
 		./a.out
 		g++ --std=c++17 unittest/lexer.cpp obj/*.o
@@ -26,6 +27,7 @@ lib:
 		g++ -c --std=c++17 src/lexer.cpp -o obj/lexer.o
 		g++ -c --std=c++17 src/ast.cpp -o obj/ast.o
 		g++ -c --std=c++17 src/parser.cpp -o obj/parser.o
+		g++ -c --std=c++17 src/llvm_gen.cpp -o obj/llvm_gen.o
 		ar -rcs Lib/libdorothy.a obj/*.o
 
 clean:
