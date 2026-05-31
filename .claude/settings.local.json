@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(llvm-config --version)",
+      "Read(//usr/local/lib/**)",
+      "Read(//opt/homebrew/lib/**)",
+      "Bash(clang++ --version)",
+      "Bash(clang++ -v)"
+    ]
+  }
+}
