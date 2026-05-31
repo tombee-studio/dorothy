@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""commit-msg hook: enforce commit message format.
+
+Required format:
+  <kind>: <summary>
+
+  [<detail>]
+
+  Task: <task_id>
+
+Rules:
+  kind        : Ftr | Fix | Eta
+  first line  : ASCII only, <= 50 chars, summary starts with uppercase
+  detail lines: ASCII only, <= 50 chars each (optional)
+  blank lines : blank line after first line, and before "Task:"
+  task_id     : integer
+"""
+import os
+import re
+import sys
+
+
+def error(msg):
+    print(f"\n[commit-msg] {msg}\n", file=sys.stderr)
+    sys.exit(1)
+
+
+def main():
+    with open(sys.argv[1], encoding="utf-8", errors="replace") as f:
+        content = f.read()
+
+    raw = content.splitlines()
+    lines = [l for l in raw if not l.startswith("#")]
+
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    if not lines:
+        error("Commit message is empty.")
+
+    # First line: <kind>: <summary>
+    first = lines[0]
+    if not first.isascii():
+        error(f"First line must be ASCII only:\n  {first}")
+    m = re.match(r"^(Ftr|Fix|Eta): (.+)", first)
+    if not m:
+        error(
+            "First line must be '<kind>: <summary>' where kind is Ftr / Fix / Eta.\n"
+            f"  Got: {first!r}"
+        )
+    if not m.group(2)[0].isupper():
+        error(
+            f"Summary must start with an uppercase letter.\n"
+            f"  Got: {first!r}"
+        )
+    if len(first) > 50:
+        error(
+            f"First line must be 50 characters or less (currently {len(first)}).\n"
+            f"  Got: {first!r}"
+        )
+
+    # Last line: Task: <id>  (plain or already rewritten as Markdown link)
+    last = lines[-1]
+    task_match = re.match(r"^Task: (\d+)$", last) or re.match(r"^Task: \[(\d+)\]\(https://\S+\)$", last)
+    if not task_match:
+        error(f"Last line must be 'Task: <number>'.\n  Got: {last!r}")
+
+    # Blank line after first line
+    if len(lines) < 2 or lines[1].strip() != "":
+        error("There must be a blank line after the first line.")
+
+    # Blank line immediately before "Task:"
+    if len(lines) < 3 or lines[-2].strip() != "":
+        error("There must be at least one blank line before 'Task:'.")
+
+    # Detail lines: ASCII only, <= 50 chars
+    for i, line in enumerate(lines[1:-1], start=2):
+        if not line:
+            continue
+        if not line.isascii():
+            error(f"Line {i} must be ASCII only.\n  Got: {line!r}")
+        if len(line) > 50:
+            error(f"Line {i} must be 50 characters or less (currently {len(line)}).\n  Got: {line!r}")
+
+    # Rewrite plain Task line as Markdown link if not already done
+    if re.match(r"^Task: \d+$", last):
+        base_url = os.environ.get("TASK_URL", "").rstrip("/")
+        if not base_url:
+            error("TASK_URL environment variable is not set.")
+        content = re.sub(
+            r"^Task: (\d+)$",
+            lambda mo: f"Task: [{mo.group(1)}]({base_url}/{mo.group(1)})",
+            content,
+            flags=re.MULTILINE,
+        )
+        with open(sys.argv[1], "w", encoding="utf-8") as f:
+            f.write(content)
+
+
+if __name__ == "__main__":
+    main()

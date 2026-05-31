@@ -1,4 +1,7 @@
-.PHONY: lib cli test
+.PHONY: setup lib cli test
+
+setup:
+	git config core.hooksPath .githooks
 
 cli:
 		make lib
