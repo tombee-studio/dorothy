@@ -1,3 +1,6 @@
+GTEST_CFLAGS = $(shell pkg-config --cflags gtest)
+GTEST_LIBS   = $(shell pkg-config --libs gtest_main) -lpthread
+
 .PHONY: setup lib cli test
 
 setup:
@@ -15,14 +18,13 @@ test:
 		g++ -c --std=c++17 src/ast.cpp -o obj/ast.o
 		g++ -c --std=c++17 src/parser.cpp -o obj/parser.o
 		g++ -c --std=c++17 src/llvm_gen.cpp -o obj/llvm_gen.o
-		g++ --std=c++17 unittest/code.cpp obj/*.o
-		./a.out
-		g++ --std=c++17 unittest/lexer.cpp obj/*.o
-		./a.out
-		g++ --std=c++17 unittest/parser.cpp obj/*.o
-		./a.out
-		g++ --std=c++17 -o cpu unittest/cpu.cpp obj/*.o
-		g++ --std=c++17 -o compiler unittest/compile.cpp obj/*.o
+		g++ --std=c++17 $(GTEST_CFLAGS) \
+			tests/gtest_code.cpp \
+			tests/gtest_lexer.cpp \
+			tests/gtest_parser.cpp \
+			tests/gtest_integration.cpp \
+			obj/*.o $(GTEST_LIBS) -o dist/test_runner
+		./dist/test_runner
 
 lib:
 		g++ -c --std=c++17 src/code.cpp -o obj/code.o
