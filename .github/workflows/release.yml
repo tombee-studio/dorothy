@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - releases
+
+permissions:
+  contents: write
+
+jobs:
+  # ------------------------------------------------------------------ #
+  # 1. Auto-increment the patch version and push a new tag              #
+  # ------------------------------------------------------------------ #
+  tag:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bump version tag
+        id: bump
+        run: |
+          latest=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          IFS='.' read -r major minor patch <<< "${latest#v}"
+          new_tag="v${major}.${minor}.$((patch + 1))"
+          echo "tag=${new_tag}" >> "$GITHUB_OUTPUT"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${new_tag}"
+          git push origin "${new_tag}"
+
+  # ------------------------------------------------------------------ #
+  # 2. Build binaries for Linux / macOS / Windows                       #
+  # ------------------------------------------------------------------ #
+  build:
+    needs: tag
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux
+            binary: dorothy-linux
+            cc: g++
+
+          - os: macos-latest
+            target: macos
+            binary: dorothy-macos
+            cc: g++
+
+          - os: ubuntu-latest
+            target: windows
+            binary: dorothy-windows.exe
+            cc: x86_64-w64-mingw32-g++
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MinGW-w64 (Windows cross-compile)
+        if: matrix.target == 'windows'
+        run: sudo apt-get install -y mingw-w64
+
+      - name: Build
+        run: |
+          ${{ matrix.cc }} -w --std=c++14 \
+            src/entry/main.cpp \
+            src/dorothy/*.cpp \
+            src/dorothy/parser/*.cpp \
+            -o ${{ matrix.binary }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary }}
+          path: ${{ matrix.binary }}
+
+  # ------------------------------------------------------------------ #
+  # 3. Create GitHub Release and attach all binaries                    #
+  # ------------------------------------------------------------------ #
+  release:
+    needs: [tag, build]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "${{ needs.tag.outputs.tag }}" \
+            --title "Release ${{ needs.tag.outputs.tag }}" \
+            --generate-notes \
+            dorothy-linux \
+            dorothy-macos \
+            dorothy-windows.exe
