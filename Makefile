@@ -4,6 +4,7 @@ GTEST_LIBS   = $(shell pkg-config --libs gtest_main) -lpthread
 .PHONY: setup lib cli test
 
 setup:
+	sh install.sh
 	git config core.hooksPath .githooks
 
 cli:
