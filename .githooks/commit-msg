@@ -1,28 +1,101 @@
 #!/usr/bin/env python3
 """commit-msg hook: enforce commit message format.
 
-Required format:
+On `releases` branch:
+  Release v<major>.<minor>.<patch>
+
+  Event: <event_id>
+
+On other branches:
   <kind>: <summary>
 
   [<detail>]
 
   Task: <task_id>
 
-Rules:
+Rules (other branches):
   kind        : Ftr | Fix | Eta
   first line  : ASCII only, <= 50 chars, summary starts with uppercase
   detail lines: ASCII only, <= 50 chars each (optional)
-  blank lines : blank line after first line, and before "Task:"
+  blank lines  : blank line after first line, and before "Task:"
   task_id     : integer
 """
 import os
 import re
+import subprocess
 import sys
 
 
 def error(msg):
     print(f"\n[commit-msg] {msg}\n", file=sys.stderr)
     sys.exit(1)
+
+
+def current_branch():
+    try:
+        result = subprocess.run(
+            ["git", "symbolic-ref", "--short", "HEAD"],
+            capture_output=True, text=True
+        )
+        return result.stdout.strip()
+    except Exception:
+        return ""
+
+
+def validate_releases(lines, content, msg_file):
+    """releases ブランチ専用フォーマットを検証し、Event 行を URL リンクに書き換える。
+
+    期待フォーマット:
+      Release v<major>.<minor>.<patch>
+      <blank>
+      Event: <event_id>
+    """
+    # 行数チェック
+    if len(lines) < 3:
+        error(
+            "On 'releases' branch, commit message must be:\n"
+            "  Release v<major>.<minor>.<patch>\n"
+            "  (blank line)\n"
+            "  Event: <event_id>"
+        )
+
+    # 1行目: Release v<version>
+    if not re.match(r"^Release v[0-9]+\.[0-9]+\.[0-9]+$", lines[0]):
+        error(
+            "Line 1 must be 'Release v<major>.<minor>.<patch>'.\n"
+            f"Got: {lines[0]!r}"
+        )
+
+    # 2行目: 空行
+    if lines[1].strip() != "":
+        error(
+            "Line 2 must be blank.\n"
+            f"Got: {lines[1]!r}"
+        )
+
+    # 3行目: Event: <id> (数字のみ、または既にリンク済み)
+    last = lines[-1]
+    plain_match = re.match(r"^Event: ([0-9]+)$", last)
+    link_match  = re.match(r"^Event: \[([0-9]+)\]\(https://\S+\)$", last)
+    if not plain_match and not link_match:
+        error(
+            "Last line must be 'Event: <number>'.\n"
+            f"Got: {last!r}"
+        )
+
+    # Event: <id> → Event: [<id>](<EVENT_URL>/<id>) に書き換え
+    if plain_match:
+        base_url = os.environ.get("EVENT_URL", "").rstrip("/")
+        if not base_url:
+            error("EVENT_URL environment variable is not set.")
+        new_content = re.sub(
+            r"^Event: ([0-9]+)$",
+            lambda mo: f"Event: [{mo.group(1)}]({base_url}/{mo.group(1)})",
+            content,
+            flags=re.MULTILINE,
+        )
+        with open(msg_file, "w", encoding="utf-8") as f:
+            f.write(new_content)
 
 
 def main():
@@ -37,6 +110,13 @@ def main():
 
     if not lines:
         error("Commit message is empty.")
+
+    # --- releases ブランチ専用フォーマット ---
+    if current_branch() == "releases":
+        validate_releases(lines, content, sys.argv[1])
+        sys.exit(0)
+
+    # --- 通常ブランチのフォーマット検証 ---
 
     # First line: <kind>: <summary>
     first = lines[0]
