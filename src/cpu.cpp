@@ -1,4 +1,5 @@
 /* Copyright 2022(Tomoya Bansho@tomoya-kwansei) */
+#include <cstring>
 #include "../include/cpu.hpp"
 
 void CPU::set(vector<Code>& codes) { _codes = codes; }
@@ -114,6 +115,38 @@ void CPU::run(Code code) {
         case Code::EXIT:
             _exit = true;
             break;
+        case Code::FADD: {
+            float a, b;
+            memcpy(&a, &reg[2], sizeof(float));
+            memcpy(&b, &reg[3], sizeof(float));
+            float r = a + b;
+            memcpy(&reg[2], &r, sizeof(float));
+            break;
+        }
+        case Code::FSUB: {
+            float a, b;
+            memcpy(&a, &reg[2], sizeof(float));
+            memcpy(&b, &reg[3], sizeof(float));
+            float r = a - b;
+            memcpy(&reg[2], &r, sizeof(float));
+            break;
+        }
+        case Code::FMUL: {
+            float a, b;
+            memcpy(&a, &reg[2], sizeof(float));
+            memcpy(&b, &reg[3], sizeof(float));
+            float r = a * b;
+            memcpy(&reg[2], &r, sizeof(float));
+            break;
+        }
+        case Code::FDIV: {
+            float a, b;
+            memcpy(&a, &reg[2], sizeof(float));
+            memcpy(&b, &reg[3], sizeof(float));
+            float r = a / b;
+            memcpy(&reg[2], &r, sizeof(float));
+            break;
+        }
     }
     pc++;
 }

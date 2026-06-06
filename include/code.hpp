@@ -35,6 +35,10 @@ struct Code {
         INT,
         RET,
         EXIT,
+        FADD,
+        FSUB,
+        FMUL,
+        FDIV,
     } mnemonic;
     int op1;
     int op2;

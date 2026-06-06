@@ -66,6 +66,14 @@ std::string get_mnemonic(Code code) {
             return "MOVEI";
         case Code::INT:
             return "INT";
+        case Code::FADD:
+            return "FADD";
+        case Code::FSUB:
+            return "FSUB";
+        case Code::FMUL:
+            return "FMUL";
+        case Code::FDIV:
+            return "FDIV";
         default:
             return "";
     }
@@ -97,6 +105,10 @@ Code::Mnemonic Code::getCodeFromName(std::string name) {
     if (name == "MOVE") return Code::MOVE;
     if (name == "MOVEI") return Code::MOVEI;
     if (name == "INT") return Code::INT;
+    if (name == "FADD") return Code::FADD;
+    if (name == "FSUB") return Code::FSUB;
+    if (name == "FMUL") return Code::FMUL;
+    if (name == "FDIV") return Code::FDIV;
     fprintf(stderr, "undefined mnemonic: %s\n", name.c_str());
     exit(-1);
 }

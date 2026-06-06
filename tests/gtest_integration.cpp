@@ -1,6 +1,7 @@
 /* Copyright 2022(Tomoya Bansho@tomoya-kwansei) */
 #include <gtest/gtest.h>
 
+#include <cstring>
 #include <map>
 #include <string>
 #include <vector>
@@ -148,8 +149,8 @@ TEST(IntegrationTest, FunctionCall) {
 
 TEST(IntegrationTest, FunctionCallPassByValue) {
     EXPECT_EQ(run_program(
-        "func double(int a) { return a + a; }"
-        "func main() { return double(6); }"),
+        "func dbl(int a) { return a + a; }"
+        "func main() { return dbl(6); }"),
         12);
 }
 
@@ -170,4 +171,88 @@ TEST(IntegrationTest, ArrayReadWrite) {
     EXPECT_EQ(run_program(
         "func main() { int a[3]; a[0] = 10; a[1] = 20; a[2] = 30; return a[1]; }"),
         20);
+}
+
+// --- 変数型 ---
+
+// float のビット表現を int として取得するヘルパー
+static int float_bits(float f) {
+    int bits;
+    memcpy(&bits, &f, sizeof(float));
+    return bits;
+}
+
+TEST(IntegrationTest, CharVariableAssignment) {
+    // char は 1 バイト整数。値の代入と参照が正しく動作する
+    EXPECT_EQ(run_program(
+        "func main() { char c; c = 65; return c; }"),
+        65);
+}
+
+TEST(IntegrationTest, LongVariableAssignment) {
+    // long は 8 バイト整数。VM では int 幅で扱われるが代入・返却は正常
+    EXPECT_EQ(run_program(
+        "func main() { long l; l = 999; return l; }"),
+        999);
+}
+
+TEST(IntegrationTest, FloatZeroValue) {
+    // 0.0 のビット表現は 0 なので、float 変数に 0.0 を代入して返すと 0 になる
+    EXPECT_EQ(run_program(
+        "func main() { float x; x = 0.0; return x; }"),
+        float_bits(0.0f));
+}
+
+TEST(IntegrationTest, FloatAddition) {
+    // 1.0 + 1.0 = 2.0 のビット表現と一致することを確認
+    EXPECT_EQ(run_program(
+        "func main() { float x; float y; x = 1.0; y = 1.0; return x + y; }"),
+        float_bits(2.0f));
+}
+
+TEST(IntegrationTest, FloatSubtraction) {
+    EXPECT_EQ(run_program(
+        "func main() { float x; float y; x = 5.0; y = 2.0; return x - y; }"),
+        float_bits(3.0f));
+}
+
+TEST(IntegrationTest, FloatMultiplication) {
+    EXPECT_EQ(run_program(
+        "func main() { float x; float y; x = 2.0; y = 3.0; return x * y; }"),
+        float_bits(6.0f));
+}
+
+TEST(IntegrationTest, FloatDivision) {
+    EXPECT_EQ(run_program(
+        "func main() { float x; float y; x = 9.0; y = 3.0; return x / y; }"),
+        float_bits(3.0f));
+}
+
+TEST(IntegrationTest, CharFunctionArg) {
+    // char 型引数に整数値を渡して返却
+    EXPECT_EQ(run_program(
+        "func identity(char c) { return c; }"
+        "func main() { return identity(65); }"),
+        65);
+}
+
+TEST(IntegrationTest, LongFunctionArg) {
+    // long 型引数に整数値を渡して返却
+    EXPECT_EQ(run_program(
+        "func identity(long l) { return l; }"
+        "func main() { return identity(999); }"),
+        999);
+}
+
+TEST(IntegrationTest, MultipleTypedVariables) {
+    // 複数の型を同一スコープで使用
+    EXPECT_EQ(run_program(
+        "func main() {"
+        "  char  a;"
+        "  int   b;"
+        "  long  c;"
+        "  a = 1; b = 2; c = 3;"
+        "  return a + b + c;"
+        "}"),
+        6);
 }

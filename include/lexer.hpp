@@ -10,7 +10,7 @@ using std::vector;
 
 class LexerError : public runtime_error {
  public:
-    explicit LexerError(char* message) : runtime_error(message) {}
+    explicit LexerError(const char* message) : runtime_error(message) {}
 };
 
 class Lexer {
@@ -23,6 +23,7 @@ class Lexer {
     void tokenize(string, int*);
     bool skip(string, int*);
     bool tokenize_int(string, int*);
+    bool tokenize_float(string, int*);
     bool tokenize_id(string, int*);
     bool tokenize_char(string, int*);
     bool tokenize_str(string, int*);
