@@ -69,10 +69,9 @@ jobs:
 
       - name: Build
         run: |
-          ${{ matrix.cc }} -w --std=c++14 \
-            src/entry/main.cpp \
-            src/dorothy/*.cpp \
-            src/dorothy/parser/*.cpp \
+          ${{ matrix.cc }} -w --std=c++17 \
+            cli/main.cpp \
+            src/*.cpp \
             -o ${{ matrix.binary }}
 
       - uses: actions/upload-artifact@v4
