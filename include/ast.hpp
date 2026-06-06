@@ -8,6 +8,7 @@
 #include <string>
 
 #include "./code.hpp"
+#include "./llvm_gen.hpp"
 #include "./utils.hpp"
 using std::vector;
 using std::ostream;
@@ -33,6 +34,7 @@ class Node {
     virtual void print(ostream &, int tab) = 0;
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                          int) = 0;
+    virtual void llvm_emit(LLVMGenCtx &) {}
 
     static void addTab(ostream &, int tab);
 };
@@ -47,6 +49,8 @@ class DeclVar : public Node {
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                          int);
+    virtual void llvm_emit(LLVMGenCtx &);
+    virtual void llvm_param(LLVMGenCtx &, const string &);
 };
 
 class DeclArrayVar : public DeclVar {
@@ -59,6 +63,7 @@ class DeclArrayVar : public DeclVar {
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                          int);
+    virtual void llvm_emit(LLVMGenCtx &);
 };
 
 class InitializedDeclArrayVar : public DeclArrayVar {
@@ -71,6 +76,7 @@ class InitializedDeclArrayVar : public DeclArrayVar {
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                          int);
+    virtual void llvm_emit(LLVMGenCtx &);
 };
 
 class Function : public Node {
@@ -85,6 +91,9 @@ class Function : public Node {
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                          int);
+    virtual void llvm_emit(LLVMGenCtx &);
+    const string &getName() const { return _id; }
+    virtual bool isImport() const { return false; }
 };
 
 class ImportFunction : public Function {
@@ -94,6 +103,8 @@ class ImportFunction : public Function {
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                          int);
+    virtual void llvm_emit(LLVMGenCtx &);
+    bool isImport() const override { return true; }
 };
 
 class Statement : public Node {
@@ -112,6 +123,7 @@ class DeclVarSt : public Statement {
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                          int);
+    virtual void llvm_emit(LLVMGenCtx &);
 };
 
 class IfSt : public Statement {
@@ -125,6 +137,7 @@ class IfSt : public Statement {
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                          int);
+    virtual void llvm_emit(LLVMGenCtx &);
 };
 
 class WhileSt : public Statement {
@@ -136,6 +149,7 @@ class WhileSt : public Statement {
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                          int);
+    virtual void llvm_emit(LLVMGenCtx &);
 };
 
 class ForSt : public Statement {
@@ -151,6 +165,7 @@ class ForSt : public Statement {
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                          int);
+    virtual void llvm_emit(LLVMGenCtx &);
 };
 
 class CallFuncSt : public Statement {
@@ -162,6 +177,7 @@ class CallFuncSt : public Statement {
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                          int);
+    virtual void llvm_emit(LLVMGenCtx &);
 };
 
 class ReturnSt : public Statement {
@@ -172,6 +188,7 @@ class ReturnSt : public Statement {
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                          int);
+    virtual void llvm_emit(LLVMGenCtx &);
 };
 
 class Block : public Statement {
@@ -183,6 +200,7 @@ class Block : public Statement {
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                          int);
+    virtual void llvm_emit(LLVMGenCtx &);
 };
 
 class Expression : public Node {
@@ -192,6 +210,8 @@ class Expression : public Node {
                          int) = 0;
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int) = 0;
+    virtual string llvm_rval(LLVMGenCtx &) = 0;
+    virtual string llvm_lval(LLVMGenCtx &);
 };
 
 class ExpressionSt : public Statement {
@@ -203,6 +223,7 @@ class ExpressionSt : public Statement {
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                          int);
+    virtual void llvm_emit(LLVMGenCtx &);
 };
 
 class Assign : public Expression {
@@ -218,6 +239,7 @@ class Assign : public Expression {
                          int);
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
+    virtual string llvm_rval(LLVMGenCtx &);
 };
 
 class AddExp : public Expression {
@@ -232,6 +254,7 @@ class AddExp : public Expression {
                          int);
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
+    virtual string llvm_rval(LLVMGenCtx &);
 };
 
 class SubExp : public Expression {
@@ -246,6 +269,7 @@ class SubExp : public Expression {
                          int);
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
+    virtual string llvm_rval(LLVMGenCtx &);
 };
 
 class MulExp : public Expression {
@@ -260,6 +284,7 @@ class MulExp : public Expression {
                          int);
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
+    virtual string llvm_rval(LLVMGenCtx &);
 };
 
 class DivExp : public Expression {
@@ -274,6 +299,7 @@ class DivExp : public Expression {
                          int);
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
+    virtual string llvm_rval(LLVMGenCtx &);
 };
 
 class ModExp : public Expression {
@@ -288,6 +314,7 @@ class ModExp : public Expression {
                          int);
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
+    virtual string llvm_rval(LLVMGenCtx &);
 };
 
 class EQExp : public Expression {
@@ -302,6 +329,7 @@ class EQExp : public Expression {
                          int);
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
+    virtual string llvm_rval(LLVMGenCtx &);
 };
 
 class NEExp : public Expression {
@@ -316,6 +344,7 @@ class NEExp : public Expression {
                          int);
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
+    virtual string llvm_rval(LLVMGenCtx &);
 };
 
 class LTExp : public Expression {
@@ -330,6 +359,7 @@ class LTExp : public Expression {
                          int);
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
+    virtual string llvm_rval(LLVMGenCtx &);
 };
 
 class LEExp : public Expression {
@@ -344,6 +374,7 @@ class LEExp : public Expression {
                          int);
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
+    virtual string llvm_rval(LLVMGenCtx &);
 };
 
 class GTExp : public Expression {
@@ -358,6 +389,7 @@ class GTExp : public Expression {
                          int);
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
+    virtual string llvm_rval(LLVMGenCtx &);
 };
 
 class GEExp : public Expression {
@@ -372,6 +404,7 @@ class GEExp : public Expression {
                          int);
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
+    virtual string llvm_rval(LLVMGenCtx &);
 };
 
 class IntExp : public Expression {
@@ -385,6 +418,7 @@ class IntExp : public Expression {
                          int);
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
+    virtual string llvm_rval(LLVMGenCtx &);
 };
 
 class ArrayIndex : public Expression {
@@ -400,6 +434,8 @@ class ArrayIndex : public Expression {
                          int);
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
+    virtual string llvm_rval(LLVMGenCtx &);
+    virtual string llvm_lval(LLVMGenCtx &);
 };
 
 class Address : public Expression {
@@ -413,6 +449,7 @@ class Address : public Expression {
                          int);
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
+    virtual string llvm_rval(LLVMGenCtx &);
 };
 
 class RightSide : public Expression {
@@ -422,6 +459,7 @@ class RightSide : public Expression {
                          int) {}
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
+    virtual string llvm_rval(LLVMGenCtx &);
 };
 
 class Access : public Expression {
@@ -435,6 +473,8 @@ class Access : public Expression {
                          int);
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
+    virtual string llvm_rval(LLVMGenCtx &);
+    virtual string llvm_lval(LLVMGenCtx &);
 };
 
 class Variable : public Expression {
@@ -448,6 +488,8 @@ class Variable : public Expression {
                          int);
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
+    virtual string llvm_rval(LLVMGenCtx &);
+    virtual string llvm_lval(LLVMGenCtx &);
 };
 
 class CallFuncExp : public Expression {
@@ -461,4 +503,5 @@ class CallFuncExp : public Expression {
                          int);
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
+    virtual string llvm_rval(LLVMGenCtx &);
 };

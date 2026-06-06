@@ -3,7 +3,9 @@ bin/
 txt/
 .vscode/
 Lib/
+dist/
 
 .DS_Store
 compiler
 cpu
+.envrc

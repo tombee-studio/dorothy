@@ -1,0 +1,173 @@
+/* Copyright 2022(Tomoya Bansho@tomoya-kwansei) */
+#include <gtest/gtest.h>
+
+#include <map>
+#include <string>
+#include <vector>
+
+#include "../include/cpu.hpp"
+#include "../include/lexer.hpp"
+#include "../include/parser.hpp"
+
+static int run_program(const std::string& source) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex(source);
+    auto program = parser.parse(tokens);
+
+    std::map<std::string, int> vars;
+    std::map<std::string, int> functions;
+    std::vector<Code> codes;
+    for (auto func : program) {
+        func->compile(codes, vars, functions, 4);
+    }
+    codes.insert(codes.begin(), Code::makeCode(Code::CALL, functions["main"], 0));
+    codes.insert(codes.begin() + 1, Code::makeCode(Code::PUSHR, 2, 0));
+    codes.insert(codes.begin() + 2, Code::makeCode(Code::POP, 2, 0));
+    codes.insert(codes.begin() + 3, Code::makeCode(Code::EXIT, 0, 0));
+
+    CPU cpu;
+    cpu.set(codes);
+    return cpu.exe();
+}
+
+// --- 算術演算 ---
+
+TEST(IntegrationTest, ReturnConstant) {
+    EXPECT_EQ(run_program("func main() { return 42; }"), 42);
+}
+
+TEST(IntegrationTest, Addition) {
+    // test001 相当
+    EXPECT_EQ(run_program("func main() { return 1 + 2; }"), 3);
+}
+
+TEST(IntegrationTest, Subtraction) {
+    EXPECT_EQ(run_program("func main() { return 10 - 3; }"), 7);
+}
+
+TEST(IntegrationTest, Multiplication) {
+    EXPECT_EQ(run_program("func main() { return 3 * 4; }"), 12);
+}
+
+TEST(IntegrationTest, Division) {
+    EXPECT_EQ(run_program("func main() { return 10 / 2; }"), 5);
+}
+
+TEST(IntegrationTest, Modulo) {
+    EXPECT_EQ(run_program("func main() { return 10 % 3; }"), 1);
+}
+
+// --- 比較演算 ---
+
+TEST(IntegrationTest, CompareEQ) {
+    EXPECT_EQ(run_program("func main() { return 3 == 3; }"), 1);
+}
+
+TEST(IntegrationTest, CompareEQ_False) {
+    EXPECT_EQ(run_program("func main() { return 3 == 4; }"), 0);
+}
+
+TEST(IntegrationTest, CompareNE) {
+    EXPECT_EQ(run_program("func main() { return 3 != 4; }"), 1);
+}
+
+TEST(IntegrationTest, CompareLT) {
+    EXPECT_EQ(run_program("func main() { return 2 < 3; }"), 1);
+}
+
+TEST(IntegrationTest, CompareLE) {
+    EXPECT_EQ(run_program("func main() { return 3 <= 3; }"), 1);
+}
+
+TEST(IntegrationTest, CompareGT) {
+    EXPECT_EQ(run_program("func main() { return 4 > 3; }"), 1);
+}
+
+TEST(IntegrationTest, CompareGE) {
+    EXPECT_EQ(run_program("func main() { return 3 >= 4; }"), 0);
+}
+
+// --- 変数 ---
+
+TEST(IntegrationTest, VariableAssignment) {
+    EXPECT_EQ(run_program(
+        "func main() { int a; a = 5; return a; }"),
+        5);
+}
+
+TEST(IntegrationTest, MultipleVariables) {
+    EXPECT_EQ(run_program(
+        "func main() { int a; int b; a = 3; b = 4; return a + b; }"),
+        7);
+}
+
+// --- 制御フロー ---
+
+TEST(IntegrationTest, IfTrueBranch) {
+    EXPECT_EQ(run_program(
+        "func main() { if(1 == 1) { return 1; } else { return 0; } }"),
+        1);
+}
+
+TEST(IntegrationTest, IfFalseBranch) {
+    EXPECT_EQ(run_program(
+        "func main() { if(1 != 1) { return 1; } else { return 0; } }"),
+        0);
+}
+
+TEST(IntegrationTest, WhileLoop) {
+    EXPECT_EQ(run_program(
+        "func main() {"
+        "  int i; i = 0;"
+        "  while(i < 5) { i = i + 1; }"
+        "  return i;"
+        "}"),
+        5);
+}
+
+TEST(IntegrationTest, ForLoop) {
+    // test003 相当: array[i] = i を埋めて array[3] を返す
+    EXPECT_EQ(run_program(
+        "func main() {"
+        "  int array[5]; int i;"
+        "  for(i = 0; i < 5; i = i + 1) { array[i] = i; }"
+        "  return array[3];"
+        "}"),
+        3);
+}
+
+// --- 関数呼び出し ---
+
+TEST(IntegrationTest, FunctionCall) {
+    EXPECT_EQ(run_program(
+        "func add(int a, int b) { return a + b; }"
+        "func main() { return add(3, 4); }"),
+        7);
+}
+
+TEST(IntegrationTest, FunctionCallPassByValue) {
+    EXPECT_EQ(run_program(
+        "func double(int a) { return a + a; }"
+        "func main() { return double(6); }"),
+        12);
+}
+
+TEST(IntegrationTest, Recursion) {
+    // test002 相当: fibonacci(10) = 10+9+...+2+1 = 55
+    EXPECT_EQ(run_program(
+        "func fibonacci(int a) {"
+        "  if(a > 1) { return a + fibonacci(a - 1); }"
+        "  else { return 1; }"
+        "}"
+        "func main() { return fibonacci(10); }"),
+        55);
+}
+
+// --- 配列 ---
+
+TEST(IntegrationTest, ArrayReadWrite) {
+    EXPECT_EQ(run_program(
+        "func main() { int a[3]; a[0] = 10; a[1] = 20; a[2] = 30; return a[1]; }"),
+        20);
+}
