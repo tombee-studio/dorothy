@@ -1,4 +1,5 @@
 /* Copyright 2022(Tomoya Bansho@tomoya-kwansei) */
+#include <cstring>
 #include "../include/ast.hpp"
 
 void Node::addTab(ostream& os, int tab) {
@@ -9,13 +10,25 @@ void Node::addTab(ostream& os, int tab) {
 
 void Expression::print(ostream& os, int tab) { os << "<EXP>"; }
 
-void DeclVar::print(ostream& os, int tab) { os << "int " << _id; }
+static const char* vartype_name(VarType t) {
+    switch (t) {
+        case VarType::CHAR:   return "char";
+        case VarType::INT:    return "int";
+        case VarType::LONG:   return "long";
+        case VarType::FLOAT:  return "float";
+        case VarType::DOUBLE: return "double";
+    }
+    return "int";
+}
+
+void DeclVar::print(ostream& os, int tab) { os << vartype_name(_type) << " " << _id; }
 
 void DeclVar::compile(vector<Code>& ofs, map<string, int>& vars,
                       map<string, int>& functions, int offset) {
     if (!vars[_id]) {
         vars["."]++;
         vars[_id] = vars["."];
+        vars["$t:" + _id] = (int)_type;
         ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
         ofs.push_back(Code::makeCode(Code::PUSHI, vars[_id], 0));
         ofs.push_back(Code::makeCode(Code::POP, 3, 0));
@@ -384,7 +397,11 @@ void AddExp::compile(vector<Code>& ofs, map<string, int>& vars,
     _right->compile(ofs, vars, functions, offset);
     ofs.push_back(Code::makeCode("POP 3 0"));
     ofs.push_back(Code::makeCode("POP 2 0"));
-    ofs.push_back(Code::makeCode("ADD 0 0"));
+    if (compile_type(vars) == VarType::DOUBLE) {
+        ofs.push_back(Code::makeCode(Code::FADD, 0, 0));
+    } else {
+        ofs.push_back(Code::makeCode("ADD 0 0"));
+    }
     ofs.push_back(Code::makeCode("PUSHR 2 0"));
 }
 
@@ -410,7 +427,11 @@ void SubExp::compile(vector<Code>& ofs, map<string, int>& vars,
     _right->compile(ofs, vars, functions, offset);
     ofs.push_back(Code::makeCode("POP 3 0"));
     ofs.push_back(Code::makeCode("POP 2 0"));
-    ofs.push_back(Code::makeCode("SUB 0 0"));
+    if (compile_type(vars) == VarType::DOUBLE) {
+        ofs.push_back(Code::makeCode(Code::FSUB, 0, 0));
+    } else {
+        ofs.push_back(Code::makeCode("SUB 0 0"));
+    }
     ofs.push_back(Code::makeCode("PUSHR 2 0"));
 }
 
@@ -434,9 +455,13 @@ void MulExp::compile(vector<Code>& ofs, map<string, int>& vars,
                      map<string, int>& functions, int offset) {
     _left->compile(ofs, vars, functions, offset);
     _right->compile(ofs, vars, functions, offset);
-    ofs.push_back(Code::makeCode(Code::POP, 2, 0));
     ofs.push_back(Code::makeCode(Code::POP, 3, 0));
-    ofs.push_back(Code::makeCode(Code::MUL, 0, 0));
+    ofs.push_back(Code::makeCode(Code::POP, 2, 0));
+    if (compile_type(vars) == VarType::DOUBLE) {
+        ofs.push_back(Code::makeCode(Code::FMUL, 0, 0));
+    } else {
+        ofs.push_back(Code::makeCode(Code::MUL, 0, 0));
+    }
     ofs.push_back(Code::makeCode(Code::PUSHR, 2, 0));
 }
 
@@ -462,7 +487,11 @@ void DivExp::compile(vector<Code>& ofs, map<string, int>& vars,
     _right->compile(ofs, vars, functions, offset);
     ofs.push_back(Code::makeCode("POP 3 0"));
     ofs.push_back(Code::makeCode("POP 2 0"));
-    ofs.push_back(Code::makeCode("DIV 0 0"));
+    if (compile_type(vars) == VarType::DOUBLE) {
+        ofs.push_back(Code::makeCode(Code::FDIV, 0, 0));
+    } else {
+        ofs.push_back(Code::makeCode("DIV 0 0"));
+    }
     ofs.push_back(Code::makeCode("PUSHR 2 0"));
 }
 
@@ -670,6 +699,21 @@ void IntExp::lcompile(vector<Code>& codes, map<string, int>& vars,
     codes.push_back(Code::makeCode(Code::PUSHI, _int_val, 0));
 }
 
+void FloatExp::print(ostream& os, int tab) { os << _float_val; }
+
+void FloatExp::compile(vector<Code>& ofs, map<string, int>& vars,
+                       map<string, int>& functions, int offset) {
+    float f = (float)_float_val;
+    int bits;
+    memcpy(&bits, &f, sizeof(float));
+    ofs.push_back(Code::makeCode(Code::PUSHI, bits, 0));
+}
+
+void FloatExp::lcompile(vector<Code>& codes, map<string, int>& vars,
+                        map<string, int>& functions, int offset) {
+    compile(codes, vars, functions, offset);
+}
+
 void ArrayIndex::print(ostream& os, int tab) {
     _pointer->print(os, tab);
     os << "[";
@@ -736,6 +780,20 @@ void Access::lcompile(vector<Code>& ofs, map<string, int>& vars,
 }
 
 void Variable::print(ostream& os, int tab) { os << _id; }
+
+VarType Variable::llvm_declared_type(LLVMGenCtx& ctx) const {
+    auto it = ctx.var_types.find(_id);
+    return (it != ctx.var_types.end()) ? it->second : VarType::LONG;
+}
+
+VarType Variable::llvm_etype(LLVMGenCtx& ctx) const {
+    return canonical_type(llvm_declared_type(ctx));
+}
+
+VarType Variable::compile_type(map<string, int>& vars) const {
+    auto it = vars.find("$t:" + _id);
+    return (it != vars.end()) ? canonical_type((VarType)it->second) : VarType::LONG;
+}
 
 void Variable::compile(vector<Code>& codes, map<string, int>& vars,
                        map<string, int>& functions, int offset) {

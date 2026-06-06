@@ -10,6 +10,7 @@
 #include "./code.hpp"
 #include "./llvm_gen.hpp"
 #include "./utils.hpp"
+#include "./vartype.hpp"
 using std::vector;
 using std::ostream;
 using std::string;
@@ -42,9 +43,13 @@ class Node {
 class DeclVar : public Node {
  protected:
     string _id;
+    VarType _type;
 
  public:
-    explicit DeclVar(string id) : _id(id) {}
+    DeclVar(string id, VarType type = VarType::LONG) : _id(id), _type(type) {}
+
+    VarType getType() const { return _type; }
+    const string& getId() const { return _id; }
 
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
@@ -58,7 +63,8 @@ class DeclArrayVar : public DeclVar {
     int _num;
 
  public:
-    DeclArrayVar(string id, int num) : DeclVar(id), _num(num) {}
+    DeclArrayVar(string id, int num, VarType type = VarType::LONG)
+        : DeclVar(id, type), _num(num) {}
 
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
@@ -70,8 +76,9 @@ class InitializedDeclArrayVar : public DeclArrayVar {
     vector<Expression *> _values;
 
  public:
-    InitializedDeclArrayVar(string id, int num, vector<Expression *> values)
-        : DeclArrayVar(id, num), _values(values) {}
+    InitializedDeclArrayVar(string id, int num, vector<Expression *> values,
+                            VarType type = VarType::LONG)
+        : DeclArrayVar(id, num, type), _values(values) {}
 
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
@@ -212,6 +219,12 @@ class Expression : public Node {
                           map<string, int> &, int) = 0;
     virtual string llvm_rval(LLVMGenCtx &) = 0;
     virtual string llvm_lval(LLVMGenCtx &);
+    // Returns the canonical computation type (LONG for ints, DOUBLE for floats)
+    virtual VarType llvm_etype(LLVMGenCtx &) const { return VarType::LONG; }
+    // Returns the declared type of this expression's target (for lvalues)
+    virtual VarType llvm_declared_type(LLVMGenCtx &) const { return VarType::LONG; }
+    // Returns the computation type for the bytecode compiler
+    virtual VarType compile_type(map<string, int> &) const { return VarType::LONG; }
 };
 
 class ExpressionSt : public Statement {
@@ -240,6 +253,12 @@ class Assign : public Expression {
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
     virtual string llvm_rval(LLVMGenCtx &);
+    virtual VarType llvm_etype(LLVMGenCtx &ctx) const {
+        return canonical_type(_leftside->llvm_declared_type(ctx));
+    }
+    virtual VarType compile_type(map<string, int> &vars) const {
+        return _leftside->compile_type(vars);
+    }
 };
 
 class AddExp : public Expression {
@@ -255,6 +274,12 @@ class AddExp : public Expression {
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
     virtual string llvm_rval(LLVMGenCtx &);
+    virtual VarType llvm_etype(LLVMGenCtx &ctx) const {
+        return promote_canonical(_left->llvm_etype(ctx), _right->llvm_etype(ctx));
+    }
+    virtual VarType compile_type(map<string, int> &vars) const {
+        return promote_canonical(_left->compile_type(vars), _right->compile_type(vars));
+    }
 };
 
 class SubExp : public Expression {
@@ -270,6 +295,12 @@ class SubExp : public Expression {
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
     virtual string llvm_rval(LLVMGenCtx &);
+    virtual VarType llvm_etype(LLVMGenCtx &ctx) const {
+        return promote_canonical(_left->llvm_etype(ctx), _right->llvm_etype(ctx));
+    }
+    virtual VarType compile_type(map<string, int> &vars) const {
+        return promote_canonical(_left->compile_type(vars), _right->compile_type(vars));
+    }
 };
 
 class MulExp : public Expression {
@@ -285,6 +316,12 @@ class MulExp : public Expression {
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
     virtual string llvm_rval(LLVMGenCtx &);
+    virtual VarType llvm_etype(LLVMGenCtx &ctx) const {
+        return promote_canonical(_left->llvm_etype(ctx), _right->llvm_etype(ctx));
+    }
+    virtual VarType compile_type(map<string, int> &vars) const {
+        return promote_canonical(_left->compile_type(vars), _right->compile_type(vars));
+    }
 };
 
 class DivExp : public Expression {
@@ -300,6 +337,12 @@ class DivExp : public Expression {
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
     virtual string llvm_rval(LLVMGenCtx &);
+    virtual VarType llvm_etype(LLVMGenCtx &ctx) const {
+        return promote_canonical(_left->llvm_etype(ctx), _right->llvm_etype(ctx));
+    }
+    virtual VarType compile_type(map<string, int> &vars) const {
+        return promote_canonical(_left->compile_type(vars), _right->compile_type(vars));
+    }
 };
 
 class ModExp : public Expression {
@@ -315,6 +358,12 @@ class ModExp : public Expression {
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
     virtual string llvm_rval(LLVMGenCtx &);
+    virtual VarType llvm_etype(LLVMGenCtx &ctx) const {
+        return promote_canonical(_left->llvm_etype(ctx), _right->llvm_etype(ctx));
+    }
+    virtual VarType compile_type(map<string, int> &vars) const {
+        return promote_canonical(_left->compile_type(vars), _right->compile_type(vars));
+    }
 };
 
 class EQExp : public Expression {
@@ -421,6 +470,22 @@ class IntExp : public Expression {
     virtual string llvm_rval(LLVMGenCtx &);
 };
 
+class FloatExp : public Expression {
+    double _float_val;
+
+ public:
+    explicit FloatExp(double float_val) : _float_val(float_val) {}
+
+    virtual void print(ostream &, int tab);
+    virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
+                         int);
+    virtual void lcompile(vector<Code> &, map<string, int> &,
+                          map<string, int> &, int);
+    virtual string llvm_rval(LLVMGenCtx &);
+    virtual VarType llvm_etype(LLVMGenCtx &) const { return VarType::DOUBLE; }
+    virtual VarType compile_type(map<string, int> &) const { return VarType::DOUBLE; }
+};
+
 class ArrayIndex : public Expression {
     Expression *_pointer;
     Expression *_index;
@@ -490,6 +555,9 @@ class Variable : public Expression {
                           map<string, int> &, int);
     virtual string llvm_rval(LLVMGenCtx &);
     virtual string llvm_lval(LLVMGenCtx &);
+    virtual VarType llvm_etype(LLVMGenCtx &) const;
+    virtual VarType llvm_declared_type(LLVMGenCtx &) const;
+    virtual VarType compile_type(map<string, int> &) const;
 };
 
 class CallFuncExp : public Expression {

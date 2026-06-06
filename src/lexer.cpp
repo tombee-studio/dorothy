@@ -13,7 +13,11 @@ void Lexer::tokenize(string p, int* ppos) {
         if (skip(p, ppos)) continue;
         if (tokenize_keyword(p, ppos, "if", Token::KW_IF)) continue;
         if (tokenize_keyword(p, ppos, "else", Token::KW_ELSE)) continue;
+        if (tokenize_keyword(p, ppos, "double", Token::KW_DOUBLE)) continue;
+        if (tokenize_keyword(p, ppos, "float", Token::KW_FLOAT)) continue;
         if (tokenize_keyword(p, ppos, "int", Token::KW_INT)) continue;
+        if (tokenize_keyword(p, ppos, "long", Token::KW_LONG)) continue;
+        if (tokenize_keyword(p, ppos, "char", Token::KW_CHAR)) continue;
         if (tokenize_keyword(p, ppos, "while", Token::KW_WHILE)) continue;
         if (tokenize_keyword(p, ppos, "return", Token::KW_RETURN)) continue;
         if (tokenize_keyword(p, ppos, "func", Token::KW_FUNC)) continue;
@@ -43,6 +47,7 @@ void Lexer::tokenize(string p, int* ppos) {
         if (tokenize_str(p, ppos)) continue;
         if (tokenize_char(p, ppos)) continue;
         if (tokenize_id(p, ppos)) continue;
+        if (tokenize_float(p, ppos)) continue;
         if (tokenize_int(p, ppos)) continue;
         throw LexerError(format("undefined token: %c", p[*ppos]).data());
     }
@@ -90,6 +95,21 @@ bool Lexer::tokenize_str(string p, int* ppos) {
     tokens.push_back(Token::make_int(0));
     tokens.push_back(Token::make_operator((Token::Type)'}'));
     (*ppos)++;
+    return true;
+}
+
+bool Lexer::tokenize_float(string p, int* ppos) {
+    int start = *ppos;
+    if (p[start] < '0' || p[start] > '9') return false;
+    int i = start;
+    while (p[i] >= '0' && p[i] <= '9') i++;
+    if (p[i] != '.') return false;
+    i++;
+    if (p[i] < '0' || p[i] > '9') return false;
+    while (p[i] >= '0' && p[i] <= '9') i++;
+    string str = p.substr(start, i - start);
+    *ppos = i;
+    tokens.push_back(Token::make_float(stod(str)));
     return true;
 }
 

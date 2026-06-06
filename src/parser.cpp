@@ -33,11 +33,27 @@ Function *Parser::parse_function(vector<Token> &tokens) {
     return new Function(id_token.id, declargs, block);
 }
 
+static bool is_type_keyword(Token::Type t) {
+    return t == Token::KW_INT || t == Token::KW_CHAR || t == Token::KW_LONG ||
+           t == Token::KW_FLOAT || t == Token::KW_DOUBLE;
+}
+
+static VarType token_to_vartype(Token::Type t) {
+    switch (t) {
+        case Token::KW_CHAR:   return VarType::CHAR;
+        case Token::KW_INT:    return VarType::INT;
+        case Token::KW_LONG:   return VarType::LONG;
+        case Token::KW_FLOAT:  return VarType::FLOAT;
+        case Token::KW_DOUBLE: return VarType::DOUBLE;
+        default:               return VarType::LONG;
+    }
+}
+
 vector<DeclVar *> Parser::parse_declargs(vector<Token> &tokens) {
     vector<DeclVar *> declargs;
     if (consume(tokens, (Token::Type)'(').type == Token::NONE)
         throw ParseError(format("position: %d", _pos), tokens[_pos]);
-    if (tokens[_pos].type == Token::KW_INT) {
+    if (is_type_keyword(tokens[_pos].type)) {
         declargs.push_back(parse_declvar(tokens));
         while (consume(tokens, (Token::Type)',').type == (Token::Type)',') {
             declargs.push_back(parse_declvar(tokens));
@@ -49,12 +65,14 @@ vector<DeclVar *> Parser::parse_declargs(vector<Token> &tokens) {
 }
 
 DeclVar *Parser::parse_declvar(vector<Token> &tokens) {
-    if (consume(tokens, Token::KW_INT).type == Token::NONE) return NULL;
+    if (!is_type_keyword(tokens[_pos].type)) return NULL;
+    VarType vtype = token_to_vartype(tokens[_pos].type);
+    _pos++;
     Token id_token = consume(tokens, Token::TK_ID);
     if (id_token.type == Token::NONE)
         throw ParseError(format("position: %d", _pos), tokens[_pos]);
     if (consume(tokens, (Token::Type)'[').type == Token::NONE) {
-        return new DeclVar(id_token.id);
+        return new DeclVar(id_token.id, vtype);
     } else {
         Token num_token;
         if ((num_token = consume(tokens, Token::TK_INT)).type != Token::NONE) {
@@ -62,15 +80,15 @@ DeclVar *Parser::parse_declvar(vector<Token> &tokens) {
                 if (consume(tokens, (Token::Type)'=').type != Token::NONE) {
                     return new InitializedDeclArrayVar(
                         id_token.id, num_token.int_val,
-                        parse_array_initializer(tokens));
+                        parse_array_initializer(tokens), vtype);
                 } else {
-                    return new DeclArrayVar(id_token.id, num_token.int_val);
+                    return new DeclArrayVar(id_token.id, num_token.int_val, vtype);
                 }
             } else {
                 throw ParseError("expected ']'", tokens[_pos]);
             }
         } else {
-            throw ParseError("array variableshould be initialized with 'INT'",
+            throw ParseError("array variable should be initialized with 'INT'",
                              tokens[_pos]);
         }
     }
@@ -327,7 +345,9 @@ Expression *Parser::parse_assign(vector<Token> &tokens) {
 }
 
 Expression *Parser::parse_integer(vector<Token> &tokens) {
-    Token token = consume(tokens, Token::TK_INT);
+    Token token = consume(tokens, Token::TK_FLOAT);
+    if (token.type != Token::NONE) return new FloatExp(token.float_val);
+    token = consume(tokens, Token::TK_INT);
     if (token.type == 0) return NULL;
     return new IntExp(token.int_val);
 }

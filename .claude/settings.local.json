@@ -5,7 +5,10 @@
       "Read(//usr/local/lib/**)",
       "Read(//opt/homebrew/lib/**)",
       "Bash(clang++ --version)",
-      "Bash(clang++ -v)"
+      "Bash(clang++ -v)",
+      "Bash(cat)",
+      "Bash(timeout 5 ./dist/dorothy /tmp/test_interp.txt)",
+      "Bash(echo \"exit: $?\")"
     ]
   }
 }
