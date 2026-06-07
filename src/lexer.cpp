@@ -15,6 +15,9 @@ void Lexer::tokenize(string p, int* ppos) {
         if (tokenize_keyword(p, ppos, "else", Token::KW_ELSE)) continue;
         if (tokenize_keyword(p, ppos, "var", Token::KW_VAR)) continue;
         if (tokenize_keyword(p, ppos, "let", Token::KW_LET)) continue;
+        if (tokenize_keyword(p, ppos, "struct", Token::KW_STRUCT)) continue;
+        if (tokenize_keyword(p, ppos, "constructor", Token::KW_CONSTRUCTOR)) continue;
+        if (tokenize_keyword(p, ppos, "this", Token::KW_THIS)) continue;
         if (tokenize_keyword(p, ppos, "double", Token::KW_DOUBLE)) continue;
         if (tokenize_keyword(p, ppos, "float", Token::KW_FLOAT)) continue;
         if (tokenize_keyword(p, ppos, "int", Token::KW_INT)) continue;
@@ -34,6 +37,11 @@ void Lexer::tokenize(string p, int* ppos) {
         if (tokenize_operator(p, ppos, '=')) continue;
         if (tokenize_operator(p, ppos, ',')) continue;
         if (tokenize_operator(p, ppos, '+')) continue;
+        if ((size_t)(*ppos + 1) < p.size() && p[*ppos] == '-' && p[*ppos + 1] == '>') {
+            *ppos += 2;
+            tokens.push_back(Token::make_operator(Token::TK_ARROW));
+            continue;
+        }
         if (tokenize_operator(p, ppos, '-')) continue;
         if (tokenize_operator(p, ppos, '*')) continue;
         if (tokenize_operator(p, ppos, '/')) continue;
@@ -47,6 +55,7 @@ void Lexer::tokenize(string p, int* ppos) {
         if (tokenize_operator(p, ppos, '[')) continue;
         if (tokenize_operator(p, ppos, ']')) continue;
         if (tokenize_operator(p, ppos, ':')) continue;
+        if (tokenize_operator(p, ppos, '.')) continue;
         if (tokenize_str(p, ppos)) continue;
         if (tokenize_char(p, ppos)) continue;
         if (tokenize_id(p, ppos)) continue;
@@ -120,7 +129,8 @@ bool Lexer::tokenize_id(string p, int* ppos) {
     int start = *ppos;
     if (p[start] < 'A' || p[start] > 'z' || p[start] == '_') return false;
     while ((p[*ppos] >= 'A' && p[*ppos] <= 'Z') ||
-           (p[*ppos] >= 'a' && p[*ppos] <= 'z') || p[*ppos] == '_')
+           (p[*ppos] >= 'a' && p[*ppos] <= 'z') ||
+           (p[*ppos] >= '0' && p[*ppos] <= '9') || p[*ppos] == '_')
         (*ppos)++;
     string str = p.substr(start, *ppos - start);
     tokens.push_back(Token::make_id(str));
@@ -137,6 +147,7 @@ bool Lexer::tokenize_keyword(string p, int* ppos, string keyword,
     char next = p[nextIndex];
     bool is_id_char = (next >= 'A' && next <= 'Z') ||
                       (next >= 'a' && next <= 'z') ||
+                      (next >= '0' && next <= '9') ||
                       next == '_';
     if (is_id_char) return false;
     (*ppos) += keyword.size();

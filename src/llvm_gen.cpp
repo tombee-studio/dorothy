@@ -6,6 +6,9 @@ using std::to_string;
 using std::string;
 using std::vector;
 
+static std::vector<std::pair<string, string>>
+prepareCallArgs(LLVMGenCtx&, const string&, const vector<Expression*>&);
+
 // Convert a value in canonical form to the declared target LLVM type.
 static string llvm_coerce(LLVMGenCtx& ctx, const string& val,
                           VarType from_canonical, VarType to_declared) {
@@ -83,6 +86,27 @@ string Expression::llvm_lval(LLVMGenCtx& ctx) {
 // ===== DeclVar =====
 
 void DeclVar::llvm_emit(LLVMGenCtx& ctx) {
+    if (_type == VarType::STRUCT) {
+        auto it = g_struct_defs.find(_struct_name);
+        if (it == g_struct_defs.end())
+            throw CompileError(("undefined struct type: " + _struct_name).c_str());
+        const auto& sdef = it->second;
+        ctx.struct_var_types[_id] = _struct_name;
+        if (_is_const) ctx.const_vars.insert(_id);
+        for (auto& field : sdef.fields) {
+            int n = ctx.counter++;
+            string tstr = llvm_type_str(field.type);
+            string ptr = "%" + _id + "." + field.name + ".addr." + to_string(n);
+            ctx.out << "  " << ptr << " = alloca " << tstr << "\n";
+            if (is_float_type(field.type)) {
+                ctx.out << "  store " << tstr << " 0.0, ptr " << ptr << "\n";
+            } else {
+                ctx.out << "  store " << tstr << " 0, ptr " << ptr << "\n";
+            }
+            ctx.struct_field_ptrs[_id][field.name] = ptr;
+        }
+        return;
+    }
     int n = ctx.counter++;
     string tstr = llvm_type_str(_type);
     string ptr = "%" + _id + ".addr." + to_string(n);
@@ -101,6 +125,78 @@ void DeclVar::llvm_emit(LLVMGenCtx& ctx) {
 
 void InitializedDeclVar::llvm_emit(LLVMGenCtx& ctx) {
     DeclVar::llvm_emit(ctx);  // alloca + zero-init + type/const tracking
+
+    if (_type == VarType::STRUCT) {
+        // struct-returning function call: call void @func(ptr %field0, ptr %field1, ...)
+        auto cfe = dynamic_cast<CallFuncExp*>(_init);
+        if (cfe && ctx.func_return_struct.count(cfe->getId())) {
+            const auto& sdef = g_struct_defs[_struct_name];
+            bool is_imported = ctx.defined_funcs.find(cfe->getId()) == ctx.defined_funcs.end();
+            vector<pair<string, string>> all_args;
+            for (auto& field : sdef.fields)
+                all_args.push_back({"ptr", ctx.struct_field_ptrs[_id][field.name]});
+            for (auto& p : prepareCallArgs(ctx, cfe->getId(), cfe->getArgs()))
+                all_args.push_back(p);
+            ctx.out << "  call void ";
+            if (is_imported) ctx.out << "(...) ";
+            ctx.out << "@" << cfe->getId() << "(";
+            for (int i = 0; i < (int)all_args.size(); i++) {
+                if (i > 0) ctx.out << ", ";
+                ctx.out << all_args[i].first << " " << all_args[i].second;
+            }
+            ctx.out << ")\n";
+            return;
+        }
+
+        auto si = dynamic_cast<StructInit*>(_init);
+        if (!si)
+            throw CompileError("struct variable must be initialized with struct literal or struct-returning function");
+        const auto& sdef = g_struct_defs[_struct_name];
+
+        // Save and set 'this' context
+        string prev_this_var = ctx.this_var;
+        ctx.this_var = _id;
+
+        // Execute constructor: allocate param allocas, assign values, compile body
+        if (sdef.constructor) {
+            const auto& call_args = si->getArgs();
+            for (int pi = 0; pi < (int)sdef.constructor->params.size(); pi++) {
+                const string& pname = sdef.constructor->params[pi].first;
+                VarType ptype = sdef.constructor->params[pi].second;
+                int n = ctx.counter++;
+                string tstr = llvm_type_str(ptype);
+                string ptr = "%" + pname + ".param." + to_string(n);
+                ctx.out << "  " << ptr << " = alloca " << tstr << "\n";
+                if (is_float_type(ptype)) {
+                    ctx.out << "  store " << tstr << " 0.0, ptr " << ptr << "\n";
+                } else {
+                    ctx.out << "  store " << tstr << " 0, ptr " << ptr << "\n";
+                }
+                ctx.vars[pname] = ptr;
+                ctx.var_types[pname] = ptype;
+
+                // Store positional arg value
+                if (pi < (int)call_args.size()) {
+                    string val = call_args[pi]->llvm_rval(ctx);
+                    VarType src_c = call_args[pi]->llvm_etype(ctx);
+                    string store_val = llvm_coerce(ctx, val, src_c, ptype);
+                    ctx.out << "  store " << tstr << " " << store_val
+                            << ", ptr " << ptr << "\n";
+                }
+            }
+            sdef.constructor->body->llvm_emit(ctx);
+
+            // Remove param vars from context
+            for (auto& [pname, ptype] : sdef.constructor->params) {
+                ctx.vars.erase(pname);
+                ctx.var_types.erase(pname);
+            }
+        }
+
+        ctx.this_var = prev_this_var;
+        return;
+    }
+
     string val = _init->llvm_rval(ctx);
     VarType src_canonical = _init->llvm_etype(ctx);
     string tstr = llvm_type_str(_type);
@@ -265,6 +361,30 @@ void ForSt::llvm_emit(LLVMGenCtx& ctx) {
 // ===== ReturnSt =====
 
 void ReturnSt::llvm_emit(LLVMGenCtx& ctx) {
+    // Struct return: copy each field to the caller's sret pointers
+    if (!ctx.current_ret_struct.empty()) {
+        const string& varname = _exp->getVarName();
+        if (varname.empty() || !ctx.struct_var_types.count(varname))
+            throw CompileError("return value must be a struct variable");
+        const string& var_struct = ctx.struct_var_types[varname];
+        if (var_struct != ctx.current_ret_struct)
+            throw CompileError(("cannot return struct '" + var_struct +
+                                "' from function expecting '" + ctx.current_ret_struct + "'").c_str());
+        const auto& sdef = g_struct_defs[ctx.current_ret_struct];
+        for (int fi = 0; fi < (int)sdef.fields.size(); fi++) {
+            const auto& field = sdef.fields[fi];
+            string tstr = llvm_type_str(field.type);
+            string ptr = ctx.struct_field_ptrs[varname][field.name];
+            string val = ctx.fresh("ret.field");
+            ctx.out << "  " << val << " = load " << tstr << ", ptr " << ptr << "\n";
+            ctx.out << "  store " << tstr << " " << val
+                    << ", ptr " << ctx.sret_field_ptrs[fi] << "\n";
+        }
+        ctx.out << "  ret void\n";
+        ctx.terminated = true;
+        return;
+    }
+
     string val = _exp->llvm_rval(ctx);
     VarType etype = _exp->llvm_etype(ctx);
     // All non-main functions return i64; convert float if needed
@@ -284,20 +404,39 @@ void ReturnSt::llvm_emit(LLVMGenCtx& ctx) {
 }
 
 // Returns pairs of (llvm_type_str, reg) after emitting all prep instructions.
+// Struct arguments are expanded to individual field values.
 static std::vector<std::pair<string, string>>
 prepareCallArgs(LLVMGenCtx& ctx, const std::string& id,
                 const vector<Expression*>& args) {
-    auto pit = ctx.func_param_types.find(id);
+    auto pit = ctx.func_param_info.find(id);
     std::vector<std::pair<string, string>> result;
     for (int i = 0; i < (int)args.size(); i++) {
-        string val = args[i]->llvm_rval(ctx);
-        VarType src_c = args[i]->llvm_etype(ctx);
-        if (pit != ctx.func_param_types.end() && i < (int)pit->second.size()) {
-            VarType tgt = pit->second[i];
-            val = llvm_coerce(ctx, val, src_c, tgt);
-            result.push_back({llvm_type_str(tgt), val});
+        bool param_is_struct = (pit != ctx.func_param_info.end() &&
+                                i < (int)pit->second.size() &&
+                                pit->second[i].type == VarType::STRUCT);
+        if (param_is_struct) {
+            const string& struct_name = pit->second[i].struct_name;
+            const string& varname = args[i]->getVarName();
+            if (varname.empty() || !ctx.struct_var_types.count(varname))
+                throw CompileError("expected struct variable for struct parameter");
+            const auto& sdef = g_struct_defs[struct_name];
+            for (auto& field : sdef.fields) {
+                string tstr = llvm_type_str(field.type);
+                string ptr = ctx.struct_field_ptrs[varname][field.name];
+                string val = ctx.fresh("arg.field");
+                ctx.out << "  " << val << " = load " << tstr << ", ptr " << ptr << "\n";
+                result.push_back({tstr, val});
+            }
         } else {
-            result.push_back({"i64", val});
+            string val = args[i]->llvm_rval(ctx);
+            VarType src_c = args[i]->llvm_etype(ctx);
+            if (pit != ctx.func_param_info.end() && i < (int)pit->second.size()) {
+                VarType tgt = pit->second[i].type;
+                val = llvm_coerce(ctx, val, src_c, tgt);
+                result.push_back({llvm_type_str(tgt), val});
+            } else {
+                result.push_back({"i64", val});
+            }
         }
     }
     return result;
@@ -306,6 +445,8 @@ prepareCallArgs(LLVMGenCtx& ctx, const std::string& id,
 // ===== CallFuncSt =====
 
 void CallFuncSt::llvm_emit(LLVMGenCtx& ctx) {
+    if (ctx.func_return_struct.count(_id))
+        throw CompileError(("struct-returning function result must be assigned to a struct variable: " + _id).c_str());
     string reg = ctx.fresh("call");
     bool is_imported = ctx.defined_funcs.find(_id) == ctx.defined_funcs.end();
     // Prepare all args (emit conversions) before the call instruction
@@ -328,34 +469,106 @@ void ExpressionSt::llvm_emit(LLVMGenCtx& ctx) { _exp->llvm_rval(ctx); }
 
 // ===== Function =====
 
+void Function::llvm_pre_register(LLVMGenCtx& ctx) {
+    if (!_ret_struct_name.empty())
+        ctx.func_return_struct[_id] = _ret_struct_name;
+    vector<ParamInfo> pinfo;
+    vector<VarType> flat_types;
+    for (auto* arg : _args) {
+        pinfo.push_back({arg->getType(), arg->getStructName()});
+        if (arg->getType() == VarType::STRUCT) {
+            const auto& sdef = g_struct_defs[arg->getStructName()];
+            for (auto& f : sdef.fields) flat_types.push_back(f.type);
+        } else {
+            flat_types.push_back(arg->getType());
+        }
+    }
+    ctx.func_param_info[_id] = pinfo;
+    ctx.func_param_types[_id] = flat_types;
+}
+
 void Function::llvm_emit(LLVMGenCtx& ctx) {
     ctx.vars.clear();
     ctx.var_types.clear();
     ctx.const_vars.clear();
+    ctx.struct_field_ptrs.clear();
+    ctx.struct_var_types.clear();
+    ctx.this_var.clear();
+    ctx.sret_field_ptrs.clear();
+    ctx.current_ret_struct = _ret_struct_name;
     ctx.terminated = false;
     ctx.current_function = _id;
 
     bool is_main = (_id == "main");
-    ctx.out << "define " << (is_main ? "i32" : "i64") << " @" << _id << "(";
-    for (int i = 0; i < (int)_args.size(); i++) {
+    bool returns_struct = !_ret_struct_name.empty();
+
+    // Register signatures (also done by pre_register, but ensure consistency)
+    llvm_pre_register(ctx);
+
+    string ret_llvm = is_main ? "i32" : (returns_struct ? "void" : "i64");
+
+    // Build LLVM param list: [sret ptrs...] [expanded field params...]
+    vector<pair<string, string>> llvm_params;
+
+    if (returns_struct) {
+        const auto& sdef = g_struct_defs[_ret_struct_name];
+        for (int fi = 0; fi < (int)sdef.fields.size(); fi++) {
+            string reg = "%sret." + to_string(fi);
+            llvm_params.push_back({"ptr", reg});
+            ctx.sret_field_ptrs.push_back(reg);
+        }
+    }
+
+    int flat_idx = 0;
+    for (auto* arg : _args) {
+        if (arg->getType() == VarType::STRUCT) {
+            const auto& sdef = g_struct_defs[arg->getStructName()];
+            for (auto& field : sdef.fields)
+                llvm_params.push_back({llvm_type_str(field.type),
+                                       "%param." + to_string(flat_idx++)});
+        } else {
+            llvm_params.push_back({llvm_type_str(arg->getType()),
+                                   "%param." + to_string(flat_idx++)});
+        }
+    }
+
+    ctx.out << "define " << ret_llvm << " @" << _id << "(";
+    for (int i = 0; i < (int)llvm_params.size(); i++) {
         if (i > 0) ctx.out << ", ";
-        ctx.out << llvm_type_str(_args[i]->getType()) << " %param." << i;
+        ctx.out << llvm_params[i].first << " " << llvm_params[i].second;
     }
     ctx.out << ") {\nentry:\n";
 
-    // Record parameter types for call sites
-    std::vector<VarType> ptypes;
-    for (auto arg : _args) ptypes.push_back(arg->getType());
-    ctx.func_param_types[_id] = ptypes;
-
-    for (int i = 0; i < (int)_args.size(); i++) {
-        _args[i]->llvm_param(ctx, "%param." + to_string(i));
+    // Allocate and initialize parameters
+    flat_idx = 0;
+    for (auto* arg : _args) {
+        if (arg->getType() == VarType::STRUCT) {
+            const string& sname = arg->getStructName();
+            const string& pname = arg->getId();
+            const auto& sdef = g_struct_defs[sname];
+            ctx.struct_var_types[pname] = sname;
+            if (arg->isConst()) ctx.const_vars.insert(pname);
+            for (auto& field : sdef.fields) {
+                int n = ctx.counter++;
+                string tstr = llvm_type_str(field.type);
+                string ptr = "%" + pname + "." + field.name + ".addr." + to_string(n);
+                string flat_reg = "%param." + to_string(flat_idx++);
+                ctx.out << "  " << ptr << " = alloca " << tstr << "\n";
+                ctx.out << "  store " << tstr << " " << flat_reg << ", ptr " << ptr << "\n";
+                ctx.struct_field_ptrs[pname][field.name] = ptr;
+            }
+        } else {
+            arg->llvm_param(ctx, "%param." + to_string(flat_idx++));
+        }
     }
 
     _body->llvm_emit(ctx);
 
     if (!ctx.terminated) {
-        ctx.out << (is_main ? "  ret i32 0\n" : "  ret i64 0\n");
+        if (returns_struct)
+            ctx.out << "  ret void\n";
+        else
+            ctx.out << (is_main ? "  ret i32 0\n" : "  ret i64 0\n");
     }
 
     ctx.out << "}\n\n";
@@ -469,6 +682,61 @@ string GEExp::llvm_rval(LLVMGenCtx& ctx) {
 
 string IntExp::llvm_rval(LLVMGenCtx& ctx) { return to_string(_int_val); }
 
+// ===== MemberAccess =====
+
+static string resolve_struct_var(LLVMGenCtx& ctx, const string& varname) {
+    // "$this" resolves to the actual struct variable name
+    return (varname == "$this" && !ctx.this_var.empty()) ? ctx.this_var : varname;
+}
+
+static VarType member_field_type(LLVMGenCtx& ctx, const string& varname,
+                                  const string& member) {
+    string resolved = resolve_struct_var(ctx, varname);
+    auto sit = ctx.struct_var_types.find(resolved);
+    if (sit == ctx.struct_var_types.end())
+        throw CompileError(("not a struct variable: " + resolved).c_str());
+    const auto& sdef = g_struct_defs[sit->second];
+    int fidx = sdef.fieldIndex(member);
+    if (fidx < 0)
+        throw CompileError(("no field '" + member + "' in " + sit->second).c_str());
+    return sdef.fields[fidx].type;
+}
+
+string MemberAccess::llvm_rval(LLVMGenCtx& ctx) {
+    string varname = resolve_struct_var(ctx, _object->getVarName());
+    string ptr = ctx.struct_field_ptrs[varname][_member];
+    VarType ftype = member_field_type(ctx, varname, _member);
+    string tstr = llvm_type_str(ftype);
+    string reg = ctx.fresh(varname + "_" + _member);
+    ctx.out << "  " << reg << " = load " << tstr << ", ptr " << ptr << "\n";
+    return llvm_to_canonical(ctx, reg, ftype);
+}
+
+string MemberAccess::llvm_lval(LLVMGenCtx& ctx) {
+    string varname = resolve_struct_var(ctx, _object->getVarName());
+    return ctx.struct_field_ptrs[varname][_member];
+}
+
+VarType MemberAccess::llvm_etype(LLVMGenCtx& ctx) const {
+    string varname = resolve_struct_var(ctx, _object->getVarName());
+    return canonical_type(member_field_type(ctx, varname, _member));
+}
+
+VarType MemberAccess::llvm_declared_type(LLVMGenCtx& ctx) const {
+    string varname = resolve_struct_var(ctx, _object->getVarName());
+    return member_field_type(ctx, varname, _member);
+}
+
+// ===== ThisExpr =====
+
+string ThisExpr::llvm_rval(LLVMGenCtx& ctx) {
+    throw CompileError("'this' cannot be used as a standalone rvalue");
+}
+
+string ThisExpr::llvm_lval(LLVMGenCtx& ctx) {
+    throw CompileError("'this' cannot be used as a standalone lvalue");
+}
+
 // ===== FloatExp =====
 
 string FloatExp::llvm_rval(LLVMGenCtx& ctx) {
@@ -483,6 +751,8 @@ string FloatExp::llvm_rval(LLVMGenCtx& ctx) {
 string Variable::llvm_rval(LLVMGenCtx& ctx) {
     auto it = ctx.vars.find(_id);
     if (it == ctx.vars.end()) {
+        if (ctx.struct_var_types.count(_id))
+            throw CompileError(("struct variable cannot be used as a value: " + _id).c_str());
         throw CompileError(("undefined variable: " + _id).c_str());
     }
     VarType declared = llvm_declared_type(ctx);
@@ -495,6 +765,8 @@ string Variable::llvm_rval(LLVMGenCtx& ctx) {
 string Variable::llvm_lval(LLVMGenCtx& ctx) {
     auto it = ctx.vars.find(_id);
     if (it == ctx.vars.end()) {
+        if (ctx.struct_var_types.count(_id))
+            throw CompileError(("struct variable cannot be used as a value: " + _id).c_str());
         throw CompileError(("undefined variable: " + _id).c_str());
     }
     return it->second;
@@ -560,6 +832,8 @@ string Access::llvm_lval(LLVMGenCtx& ctx) {
 // ===== CallFuncExp =====
 
 string CallFuncExp::llvm_rval(LLVMGenCtx& ctx) {
+    if (ctx.func_return_struct.count(_id))
+        throw CompileError(("struct-returning function result must be assigned to a struct variable: " + _id).c_str());
     string reg = ctx.fresh("call");
     bool is_imported = ctx.defined_funcs.find(_id) == ctx.defined_funcs.end();
     // Prepare all args (emit conversions) before the call instruction

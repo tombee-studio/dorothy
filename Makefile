@@ -24,6 +24,7 @@ test:
 			tests/gtest_lexer.cpp \
 			tests/gtest_parser.cpp \
 			tests/gtest_integration.cpp \
+			tests/gtest_struct.cpp \
 			obj/*.o $(GTEST_LIBS) -o dist/test_runner
 		./dist/test_runner
 

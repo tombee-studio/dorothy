@@ -32,6 +32,10 @@ struct Token {
         TK_FLOAT,
         KW_VAR,
         KW_LET,
+        KW_STRUCT,
+        KW_CONSTRUCTOR,
+        KW_THIS,
+        TK_ARROW,   // ->
     } type;
 
     int int_val;
