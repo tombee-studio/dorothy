@@ -44,12 +44,15 @@ class DeclVar : public Node {
  protected:
     string _id;
     VarType _type;
+    bool _is_const;
 
  public:
-    DeclVar(string id, VarType type = VarType::LONG) : _id(id), _type(type) {}
+    DeclVar(string id, VarType type = VarType::LONG, bool is_const = false)
+        : _id(id), _type(type), _is_const(is_const) {}
 
     VarType getType() const { return _type; }
     const string& getId() const { return _id; }
+    bool isConst() const { return _is_const; }
 
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
@@ -58,13 +61,26 @@ class DeclVar : public Node {
     virtual void llvm_param(LLVMGenCtx &, const string &);
 };
 
+class InitializedDeclVar : public DeclVar {
+    Expression *_init;
+
+ public:
+    InitializedDeclVar(string id, VarType type, bool is_const, Expression *init)
+        : DeclVar(id, type, is_const), _init(init) {}
+
+    virtual void print(ostream &, int tab);
+    virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
+                         int);
+    virtual void llvm_emit(LLVMGenCtx &);
+};
+
 class DeclArrayVar : public DeclVar {
  protected:
     int _num;
 
  public:
     DeclArrayVar(string id, int num, VarType type = VarType::LONG)
-        : DeclVar(id, type), _num(num) {}
+        : DeclVar(id, type, false), _num(num) {}
 
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
@@ -225,6 +241,8 @@ class Expression : public Node {
     virtual VarType llvm_declared_type(LLVMGenCtx &) const { return VarType::LONG; }
     // Returns the computation type for the bytecode compiler
     virtual VarType compile_type(map<string, int> &) const { return VarType::LONG; }
+    // Returns the variable name if this is a simple variable reference, else ""
+    virtual const string& getVarName() const { static string empty; return empty; }
 };
 
 class ExpressionSt : public Statement {
@@ -558,6 +576,7 @@ class Variable : public Expression {
     virtual VarType llvm_etype(LLVMGenCtx &) const;
     virtual VarType llvm_declared_type(LLVMGenCtx &) const;
     virtual VarType compile_type(map<string, int> &) const;
+    virtual const string& getVarName() const { return _id; }
 };
 
 class CallFuncExp : public Expression {

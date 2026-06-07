@@ -15,6 +15,7 @@ struct LLVMGenCtx {
     std::map<std::string, std::string> vars;
     std::map<std::string, VarType> var_types;
     std::set<std::string> defined_funcs;
+    std::set<std::string> const_vars;
     std::map<std::string, std::vector<VarType>> func_param_types;
     bool terminated;
     std::string current_function;
