@@ -13,6 +13,8 @@ void Lexer::tokenize(string p, int* ppos) {
         if (skip(p, ppos)) continue;
         if (tokenize_keyword(p, ppos, "if", Token::KW_IF)) continue;
         if (tokenize_keyword(p, ppos, "else", Token::KW_ELSE)) continue;
+        if (tokenize_keyword(p, ppos, "var", Token::KW_VAR)) continue;
+        if (tokenize_keyword(p, ppos, "let", Token::KW_LET)) continue;
         if (tokenize_keyword(p, ppos, "double", Token::KW_DOUBLE)) continue;
         if (tokenize_keyword(p, ppos, "float", Token::KW_FLOAT)) continue;
         if (tokenize_keyword(p, ppos, "int", Token::KW_INT)) continue;
@@ -44,6 +46,7 @@ void Lexer::tokenize(string p, int* ppos) {
         if (tokenize_operator(p, ppos, ')')) continue;
         if (tokenize_operator(p, ppos, '[')) continue;
         if (tokenize_operator(p, ppos, ']')) continue;
+        if (tokenize_operator(p, ppos, ':')) continue;
         if (tokenize_str(p, ppos)) continue;
         if (tokenize_char(p, ppos)) continue;
         if (tokenize_id(p, ppos)) continue;
@@ -130,9 +133,12 @@ bool Lexer::tokenize_keyword(string p, int* ppos, string keyword,
     if (p.substr(*ppos, keyword.size()) != keyword) {
         return false;
     }
-    if (p[nextIndex] >= 'A' && p[nextIndex] <= 'z') {
-        return false;
-    }
+    // Reject if immediately followed by a letter or underscore (part of an identifier)
+    char next = p[nextIndex];
+    bool is_id_char = (next >= 'A' && next <= 'Z') ||
+                      (next >= 'a' && next <= 'z') ||
+                      next == '_';
+    if (is_id_char) return false;
     (*ppos) += keyword.size();
     tokens.push_back(Token::make_operator(type));
     return true;

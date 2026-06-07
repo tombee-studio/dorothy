@@ -94,6 +94,19 @@ void DeclVar::llvm_emit(LLVMGenCtx& ctx) {
     }
     ctx.vars[_id] = ptr;
     ctx.var_types[_id] = _type;
+    if (_is_const) ctx.const_vars.insert(_id);
+}
+
+// ===== InitializedDeclVar =====
+
+void InitializedDeclVar::llvm_emit(LLVMGenCtx& ctx) {
+    DeclVar::llvm_emit(ctx);  // alloca + zero-init + type/const tracking
+    string val = _init->llvm_rval(ctx);
+    VarType src_canonical = _init->llvm_etype(ctx);
+    string tstr = llvm_type_str(_type);
+    string store_val = llvm_coerce(ctx, val, src_canonical, _type);
+    ctx.out << "  store " << tstr << " " << store_val << ", ptr "
+            << ctx.vars[_id] << "\n";
 }
 
 void DeclVar::llvm_param(LLVMGenCtx& ctx, const string& param_reg) {
@@ -318,6 +331,7 @@ void ExpressionSt::llvm_emit(LLVMGenCtx& ctx) { _exp->llvm_rval(ctx); }
 void Function::llvm_emit(LLVMGenCtx& ctx) {
     ctx.vars.clear();
     ctx.var_types.clear();
+    ctx.const_vars.clear();
     ctx.terminated = false;
     ctx.current_function = _id;
 
@@ -356,6 +370,9 @@ void ImportFunction::llvm_emit(LLVMGenCtx& ctx) {
 // ===== Assign =====
 
 string Assign::llvm_rval(LLVMGenCtx& ctx) {
+    const string& varname = _leftside->getVarName();
+    if (!varname.empty() && ctx.const_vars.count(varname))
+        throw CompileError(("cannot assign to constant: " + varname).c_str());
     string ptr = _leftside->llvm_lval(ctx);
     string val = _expr->llvm_rval(ctx);  // in canonical form
     VarType src_canonical = _expr->llvm_etype(ctx);

@@ -53,15 +53,29 @@ vector<DeclVar *> Parser::parse_declargs(vector<Token> &tokens) {
     vector<DeclVar *> declargs;
     if (consume(tokens, (Token::Type)'(').type == Token::NONE)
         throw ParseError(format("position: %d", _pos), tokens[_pos]);
-    if (is_type_keyword(tokens[_pos].type)) {
-        declargs.push_back(parse_declvar(tokens));
+    // Parameters use "name: type" syntax
+    if (tokens[_pos].type == Token::TK_ID) {
+        declargs.push_back(parse_declparam(tokens));
         while (consume(tokens, (Token::Type)',').type == (Token::Type)',') {
-            declargs.push_back(parse_declvar(tokens));
+            declargs.push_back(parse_declparam(tokens));
         }
     }
     if (consume(tokens, (Token::Type)')').type == Token::NONE)
         throw ParseError(format("position: %d", _pos), tokens[_pos]);
     return declargs;
+}
+
+DeclVar *Parser::parse_declparam(vector<Token> &tokens) {
+    Token id_token = consume(tokens, Token::TK_ID);
+    if (id_token.type == Token::NONE)
+        throw ParseError(format("expected parameter name at %d", _pos), tokens[_pos]);
+    if (consume(tokens, (Token::Type)':').type == Token::NONE)
+        throw ParseError("expected ':' after parameter name", tokens[_pos]);
+    if (!is_type_keyword(tokens[_pos].type))
+        throw ParseError("expected type keyword after ':'", tokens[_pos]);
+    VarType vtype = token_to_vartype(tokens[_pos].type);
+    _pos++;
+    return new DeclVar(id_token.id, vtype);
 }
 
 DeclVar *Parser::parse_declvar(vector<Token> &tokens) {
@@ -133,14 +147,57 @@ Block *Parser::parse_block(vector<Token> &tokens) {
 }
 
 Statement *Parser::parse_declvarst(vector<Token> &tokens) {
-    auto decl = parse_declvar(tokens);
-    if (!decl) {
-        return NULL;
-    } else {
+    Token::Type kw = tokens[_pos].type;
+    if (kw != Token::KW_VAR && kw != Token::KW_LET) return NULL;
+
+    bool is_const = (kw == Token::KW_LET);
+    _pos++;
+
+    Token id_token = consume(tokens, Token::TK_ID);
+    if (id_token.type == Token::NONE)
+        throw ParseError(format("expected identifier at %d", _pos), tokens[_pos]);
+    if (consume(tokens, (Token::Type)':').type == Token::NONE)
+        throw ParseError("expected ':' after variable name", tokens[_pos]);
+    if (!is_type_keyword(tokens[_pos].type))
+        throw ParseError("expected type keyword after ':'", tokens[_pos]);
+    VarType vtype = token_to_vartype(tokens[_pos].type);
+    _pos++;
+
+    // Array: var name: type[N] [= {vals}];
+    if (consume(tokens, (Token::Type)'[').type != Token::NONE) {
+        Token num_token = consume(tokens, Token::TK_INT);
+        if (num_token.type == Token::NONE)
+            throw ParseError("expected array size", tokens[_pos]);
+        if (consume(tokens, (Token::Type)']').type == Token::NONE)
+            throw ParseError("expected ']'", tokens[_pos]);
+        if (consume(tokens, (Token::Type)'=').type != Token::NONE) {
+            auto vals = parse_array_initializer(tokens);
+            if (consume(tokens, (Token::Type)';').type == Token::NONE)
+                throw ParseError("expected ';'", tokens[_pos]);
+            return new DeclVarSt(
+                new InitializedDeclArrayVar(id_token.id, num_token.int_val, vals, vtype));
+        }
+        if (is_const)
+            throw ParseError("'let' array requires an initializer", tokens[_pos]);
         if (consume(tokens, (Token::Type)';').type == Token::NONE)
-            throw ParseError(format("expected ';' at %d", _pos), tokens[_pos]);
-        return new DeclVarSt(decl);
+            throw ParseError("expected ';'", tokens[_pos]);
+        return new DeclVarSt(new DeclArrayVar(id_token.id, num_token.int_val, vtype));
     }
+
+    // Scalar: var name: type [= expr];
+    if (consume(tokens, (Token::Type)'=').type != Token::NONE) {
+        auto init = parse_expression(tokens);
+        if (!init)
+            throw ParseError("expected expression after '='", tokens[_pos]);
+        if (consume(tokens, (Token::Type)';').type == Token::NONE)
+            throw ParseError("expected ';'", tokens[_pos]);
+        return new DeclVarSt(new InitializedDeclVar(id_token.id, vtype, is_const, init));
+    }
+    if (is_const)
+        throw ParseError("'let' declaration requires an initializer", tokens[_pos]);
+    if (consume(tokens, (Token::Type)';').type == Token::NONE)
+        throw ParseError("expected ';'", tokens[_pos]);
+    return new DeclVarSt(new DeclVar(id_token.id, vtype, false));
 }
 
 Statement *Parser::parse_statement(vector<Token> &tokens) {

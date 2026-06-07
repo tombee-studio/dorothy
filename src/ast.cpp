@@ -29,14 +29,41 @@ void DeclVar::compile(vector<Code>& ofs, map<string, int>& vars,
         vars["."]++;
         vars[_id] = vars["."];
         vars["$t:" + _id] = (int)_type;
+        if (_is_const) vars["$const:" + _id] = 1;
         ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
         ofs.push_back(Code::makeCode(Code::PUSHI, vars[_id], 0));
         ofs.push_back(Code::makeCode(Code::POP, 3, 0));
         ofs.push_back(Code::makeCode(Code::SUB, 0, 0));
         ofs.push_back(Code::makeCode(Code::MOVE, 1, 2));
+        // Zero-initialize the slot (r2 = address of variable)
+        ofs.push_back(Code::makeCode(Code::MOVEI, 3, 0));
+        ofs.push_back(Code::makeCode(Code::STORE, 2, 3));
         return;
     }
     throw CompileError((string("redeclared variable: ") + _id).c_str());
+}
+
+void InitializedDeclVar::print(ostream& os, int tab) {
+    os << (_is_const ? "let" : "var") << " " << _id << ": "
+       << vartype_name(_type) << " = ";
+    _init->print(os, tab);
+}
+
+void InitializedDeclVar::compile(vector<Code>& ofs, map<string, int>& vars,
+                                 map<string, int>& functions, int offset) {
+    DeclVar::compile(ofs, vars, functions, offset);  // allocate slot
+    // Push address of the new variable
+    ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
+    ofs.push_back(Code::makeCode(Code::PUSHI, vars[_id], 0));
+    ofs.push_back(Code::makeCode(Code::POP, 3, 0));
+    ofs.push_back(Code::makeCode(Code::SUB, 0, 0));
+    ofs.push_back(Code::makeCode(Code::PUSHR, 2, 0));
+    // Push initial value
+    _init->compile(ofs, vars, functions, offset);
+    // Store: mem[address] = value
+    ofs.push_back(Code::makeCode(Code::POP, 3, 0));
+    ofs.push_back(Code::makeCode(Code::POP, 2, 0));
+    ofs.push_back(Code::makeCode(Code::STORE, 2, 3));
 }
 
 void DeclArrayVar::print(ostream& os, int tab) {
@@ -372,6 +399,9 @@ void Assign::print(ostream& os, int tab) {
 
 void Assign::compile(vector<Code>& ofs, map<string, int>& vars,
                      map<string, int>& functions, int offset) {
+    const string& varname = _leftside->getVarName();
+    if (!varname.empty() && vars.count("$const:" + varname))
+        throw CompileError(("cannot assign to constant: " + varname).c_str());
     _leftside->lcompile(ofs, vars, functions, offset);
     _expr->compile(ofs, vars, functions, offset);
     ofs.push_back(Code::makeCode(Code::POP, 3, 0));
