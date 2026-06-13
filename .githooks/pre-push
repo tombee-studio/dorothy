@@ -1,4 +1,8 @@
 #!/bin/bash
+
+# Save stdin (push info from git) before make test consumes it
+PUSH_INFO=$(cat)
+
 echo "[pre-push] Running tests..."
 make test
 if [ $? -ne 0 ]; then
@@ -18,23 +22,17 @@ if [ -z "$TOOL_API_URL" ] || [ -z "$TOOL_API_KEY" ] || [ -z "$TOOL_USER_ID" ]; t
   exit 0
 fi
 
-# Get commits not yet pushed to any remote
-if UPSTREAM=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null); then
-  COMMITS=$(git log --pretty=format:"%H" "$UPSTREAM..HEAD")
-else
-  COMMITS=$(git log --pretty=format:"%H" --not --remotes)
-fi
-
-for COMMIT_ID in $COMMITS; do
-  COMMIT_MSG=$(git log -1 --pretty=%B "$COMMIT_ID")
-  TASK_ID=$(echo "$COMMIT_MSG" | grep -oE 'Task: \[?[0-9]+' | grep -oE '[0-9]+' | head -1)
+post_comment() {
+  local COMMIT_ID=$1
+  local COMMIT_MSG=$(git log -1 --pretty=%B "$COMMIT_ID")
+  local TASK_ID=$(echo "$COMMIT_MSG" | grep -oE 'Task: \[?[0-9]+' | grep -oE '[0-9]+' | head -1)
 
   if [ -z "$TASK_ID" ]; then
-    continue
+    return
   fi
 
-  COMMENT="commit: $COMMIT_ID"
-  RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${TOOL_API_URL}task_app/comments/" \
+  local COMMENT="commit: $COMMIT_ID"
+  local RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${TOOL_API_URL}task_app/comments/" \
     -H "X-API-Key: $TOOL_API_KEY" \
     -H "Content-Type: application/json" \
     -d "{\"author\": $TOOL_USER_ID, \"task\": $TASK_ID, \"description\": \"$COMMENT\"}")
@@ -44,4 +42,38 @@ for COMMIT_ID in $COMMITS; do
   else
     echo "[pre-push] タスク #$TASK_ID へのコメント追加に失敗しました (HTTP $RESPONSE)"
   fi
-done
+}
+
+ZERO_SHA="0000000000000000000000000000000000000000"
+PROCESSED=0
+
+# Try stdin-based approach (normal terminal push)
+while IFS= read -r line; do
+  read -r local_ref local_sha remote_ref remote_sha <<< "$line"
+  [ -z "$local_sha" ] && continue
+  [ "$local_sha" = "$ZERO_SHA" ] && continue
+
+  if [ "$remote_sha" = "$ZERO_SHA" ] || [ -z "$remote_sha" ]; then
+    COMMITS=$(git log --pretty=format:"%H" "$local_sha" --not --remotes 2>/dev/null)
+  else
+    COMMITS=$(git log --pretty=format:"%H" "$remote_sha..$local_sha")
+  fi
+
+  for COMMIT_ID in $COMMITS; do
+    post_comment "$COMMIT_ID"
+    PROCESSED=$((PROCESSED + 1))
+  done
+done <<< "$PUSH_INFO"
+
+# Fallback: compare with upstream if stdin gave no commits
+if [ "$PROCESSED" -eq 0 ]; then
+  if UPSTREAM=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null); then
+    COMMITS=$(git log --pretty=format:"%H" "$UPSTREAM..HEAD")
+  else
+    COMMITS=$(git log --pretty=format:"%H" --not --remotes)
+  fi
+
+  for COMMIT_ID in $COMMITS; do
+    post_comment "$COMMIT_ID"
+  done
+fi
