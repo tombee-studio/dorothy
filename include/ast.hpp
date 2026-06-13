@@ -171,6 +171,21 @@ class ImportFunction : public Function {
     bool isImport() const override { return true; }
 };
 
+// Represents `import "header.h";` — imports a C header and emits correct LLVM declarations.
+class ImportCHeader : public Function {
+    string _header_path;
+
+ public:
+    explicit ImportCHeader(string header_path)
+        : Function("", {}, nullptr), _header_path(header_path) {}
+    const string &getHeaderPath() const { return _header_path; }
+    virtual void print(ostream &, int) {}
+    virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
+                         int) {}
+    virtual void llvm_emit(LLVMGenCtx &);
+    bool isImport() const override { return true; }
+};
+
 class Statement : public Node {
  public:
     virtual void print(ostream &, int tab) {}
@@ -527,6 +542,8 @@ class IntExp : public Expression {
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
     virtual string llvm_rval(LLVMGenCtx &);
+    // Integer literals are int-sized (matching C's default type for integer constants)
+    virtual VarType llvm_declared_type(LLVMGenCtx &) const override { return VarType::INT; }
 };
 
 class FloatExp : public Expression {
@@ -574,6 +591,9 @@ class Address : public Expression {
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
     virtual string llvm_rval(LLVMGenCtx &);
+    // Returns the raw LLVM ptr register (alloca ptr) without converting to i64.
+    // Used for provenance-safe pointer passing to C functions.
+    string llvm_ptr(LLVMGenCtx &ctx) { return _exp->llvm_lval(ctx); }
 };
 
 class RightSide : public Expression {

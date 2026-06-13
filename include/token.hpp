@@ -35,7 +35,8 @@ struct Token {
         KW_STRUCT,
         KW_CONSTRUCTOR,
         KW_THIS,
-        TK_ARROW,   // ->
+        TK_ARROW,     // ->
+        TK_RAWSTRING, // "string literal" (raw content, not expanded to char array)
     } type;
 
     int int_val;
@@ -66,6 +67,13 @@ struct Token {
     static Token make_operator(int type) {
         Token token;
         token.type = (Token::Type)type;
+        return token;
+    }
+
+    static Token make_string(string value) {
+        Token token;
+        token.type = TK_RAWSTRING;
+        token.id = value;
         return token;
     }
 
