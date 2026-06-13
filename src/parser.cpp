@@ -240,8 +240,7 @@ Statement *Parser::parse_declvarst(vector<Token> &tokens) {
         string struct_name = tokens[_pos].id;
         _pos++;
         if (consume(tokens, (Token::Type)'=').type == Token::NONE)
-            throw ParseError("struct variable requires '= StructType(...)' initializer",
-                             tokens[_pos]);
+            throw ParseError("struct variable requires an initializer", tokens[_pos]);
         auto init = parse_expression(tokens);
         if (!init) throw ParseError("expected struct initializer expression", tokens[_pos]);
         if (consume(tokens, (Token::Type)';').type == Token::NONE)

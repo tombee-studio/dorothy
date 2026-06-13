@@ -148,9 +148,29 @@ void InitializedDeclVar::llvm_emit(LLVMGenCtx& ctx) {
             return;
         }
 
+        // struct-to-struct copy: var a: P = b;
+        const string& raw_src = _init->getVarName();
+        string src_var = (raw_src == "$this" && !ctx.this_var.empty()) ? ctx.this_var : raw_src;
+        if (!src_var.empty() && ctx.struct_var_types.count(src_var)) {
+            const string& src_struct = ctx.struct_var_types[src_var];
+            if (src_struct != _struct_name)
+                throw CompileError(("cannot copy struct '" + src_struct +
+                                    "' into variable of type '" + _struct_name + "'").c_str());
+            const auto& sdef = g_struct_defs[_struct_name];
+            for (auto& field : sdef.fields) {
+                string tstr = llvm_type_str(field.type);
+                string src_ptr = ctx.struct_field_ptrs[src_var][field.name];
+                string dst_ptr = ctx.struct_field_ptrs[_id][field.name];
+                string val = ctx.fresh("copy.field");
+                ctx.out << "  " << val << " = load " << tstr << ", ptr " << src_ptr << "\n";
+                ctx.out << "  store " << tstr << " " << val << ", ptr " << dst_ptr << "\n";
+            }
+            return;
+        }
+
         auto si = dynamic_cast<StructInit*>(_init);
         if (!si)
-            throw CompileError("struct variable must be initialized with struct literal or struct-returning function");
+            throw CompileError("struct variable must be initialized with struct literal, struct-returning function, or another struct variable");
         const auto& sdef = g_struct_defs[_struct_name];
 
         // Save and set 'this' context

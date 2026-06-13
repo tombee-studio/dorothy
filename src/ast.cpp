@@ -89,9 +89,41 @@ void InitializedDeclVar::compile(vector<Code>& ofs, map<string, int>& vars,
     DeclVar::compile(ofs, vars, functions, offset);  // allocate slots + zero-init
 
     if (_type == VarType::STRUCT) {
+        // struct-to-struct copy: var a: P = b;
+        const string& raw_src = _init->getVarName();
+        string src_var = (raw_src == "$this" && !g_this_struct.empty()) ? "$this" : raw_src;
+        if (!src_var.empty() && g_var_struct_types.count(src_var)) {
+            const string& src_struct = g_var_struct_types[src_var];
+            if (src_struct != _struct_name)
+                throw CompileError(("cannot copy struct '" + src_struct +
+                                    "' into variable of type '" + _struct_name + "'").c_str());
+            const auto& sdef = g_struct_defs[_struct_name];
+            int src_base = vars.at(src_var);
+            int dst_base = vars.at(_id);
+            for (int fi = 0; fi < (int)sdef.fields.size(); fi++) {
+                int src_slot = src_base + fi;
+                int dst_slot = dst_base + fi;
+                // load from src field slot
+                ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
+                ofs.push_back(Code::makeCode(Code::PUSHI, src_slot, 0));
+                ofs.push_back(Code::makeCode(Code::POP, 3, 0));
+                ofs.push_back(Code::makeCode(Code::SUB, 0, 0));
+                ofs.push_back(Code::makeCode(Code::LOAD, 2, 2));
+                ofs.push_back(Code::makeCode(Code::PUSHR, 2, 0));
+                // store to dst field slot
+                ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
+                ofs.push_back(Code::makeCode(Code::PUSHI, dst_slot, 0));
+                ofs.push_back(Code::makeCode(Code::POP, 3, 0));
+                ofs.push_back(Code::makeCode(Code::SUB, 0, 0));
+                ofs.push_back(Code::makeCode(Code::POP, 3, 0));
+                ofs.push_back(Code::makeCode(Code::STORE, 2, 3));
+            }
+            return;
+        }
+
         auto si = dynamic_cast<StructInit*>(_init);
         if (!si)
-            throw CompileError("struct variable must be initialized with struct literal");
+            throw CompileError("struct variable must be initialized with struct literal or another struct variable");
         const auto& sdef = g_struct_defs[_struct_name];
 
         // Set up 'this' context

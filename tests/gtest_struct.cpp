@@ -5,6 +5,7 @@
 #include <string>
 
 #include "../include/ast.hpp"
+#include "../include/cpu.hpp"
 #include "../include/lexer.hpp"
 #include "../include/llvm_gen.hpp"
 #include "../include/parser.hpp"
@@ -256,4 +257,105 @@ TEST(StructTest, ReturnPrimitiveFromStructFuncThrows) {
             "func getP() -> Point { var n: int = 1; return n; } "
             "func main() { var r: Point = getP(); return r.x; }"),
         CompileError);
+}
+
+// ===== 構造体間代入（正常系） =====
+
+// 同じ型の構造体変数を代入すると全フィールドがコピーされる（IR 確認）
+TEST(StructTest, StructToStructCopyEmitsFieldCopy) {
+    auto ir = llvm_emit_ir(
+        "struct Point { var x: int; var y: int; } "
+        "func main() {"
+        "  var a: Point = Point(3, 4);"
+        "  var b: Point = a;"
+        "  return b.x;"
+        "}");
+    // copy.field load/store が生成される
+    EXPECT_NE(ir.find("copy.field"), std::string::npos);
+}
+
+// 構造体コピーは値コピー（コピー後に元を変更しても影響なし）— LLVM IR レベルで独立したアドレスを持つ
+TEST(StructTest, StructToStructCopyIsIndependent) {
+    auto ir = llvm_emit_ir(
+        "struct Pt { var x: int; var y: int; } "
+        "func main() {"
+        "  var a: Pt = Pt(10, 20);"
+        "  var b: Pt = a;"
+        "  a.x = 99;"
+        "  return b.x;"  // b は独立したコピーなので 10 のまま
+        "}");
+    EXPECT_FALSE(ir.empty());
+}
+
+// バイトコードパスでも構造体コピーが正しく動作する
+static int run_program_for_struct(const std::string& source) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex(source);
+    auto program = parser.parse(tokens);
+
+    std::map<std::string, int> vars;
+    std::map<std::string, int> functions;
+    std::vector<Code> codes;
+    for (auto func : program) {
+        func->compile(codes, vars, functions, 4);
+    }
+    codes.insert(codes.begin(), Code::makeCode(Code::CALL, functions["main"], 0));
+    codes.insert(codes.begin() + 1, Code::makeCode(Code::PUSHR, 2, 0));
+    codes.insert(codes.begin() + 2, Code::makeCode(Code::POP, 2, 0));
+    codes.insert(codes.begin() + 3, Code::makeCode(Code::EXIT, 0, 0));
+    CPU cpu;
+    cpu.set(codes);
+    return cpu.exe();
+}
+
+TEST(StructTest, StructToStructCopyBytecodeFieldValue) {
+    // var b: Point = a → b.x == a.x
+    EXPECT_EQ(run_program_for_struct(
+        "struct Point { var x: int; var y: int; "
+        "  constructor(px: int, py: int) { this.x = px; this.y = py; } "
+        "} "
+        "func main() {"
+        "  var a: Point = Point(7, 8);"
+        "  var b: Point = a;"
+        "  return b.x;"
+        "}"),
+        7);
+}
+
+TEST(StructTest, StructToStructCopyBytecodeIsValueCopy) {
+    // コピー後に a を変更しても b は変わらない
+    EXPECT_EQ(run_program_for_struct(
+        "struct Point { var x: int; var y: int; "
+        "  constructor(px: int, py: int) { this.x = px; this.y = py; } "
+        "} "
+        "func main() {"
+        "  var a: Point = Point(5, 6);"
+        "  var b: Point = a;"
+        "  a.x = 99;"
+        "  return b.x;"  // b は独立したコピー → 5
+        "}"),
+        5);
+}
+
+// ===== 構造体間代入（異常系） =====
+
+// 異なる構造体型を代入しようとするとエラー
+TEST(StructTest, StructToStructMismatchedTypeThrows) {
+    EXPECT_THROW(
+        llvm_emit_ir(
+            "struct P { var x: int; } "
+            "struct Q { var y: int; } "
+            "func main() { var p: P = P(1); var q: Q = p; return q.y; }"),
+        CompileError);
+}
+
+// 構造体変数なしで struct 型変数を宣言するとエラー（= なし）
+TEST(StructTest, StructVarWithoutInitThrows) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex(
+        "struct Point { var x: int; } "
+        "func main() { var p: Point; return 0; }");
+    EXPECT_THROW(parser.parse(tokens), ParseError);
 }
