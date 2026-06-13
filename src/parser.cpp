@@ -260,8 +260,45 @@ Statement *Parser::parse_declvarst(vector<Token> &tokens) {
     Token id_token = consume(tokens, Token::TK_ID);
     if (id_token.type == Token::NONE)
         throw ParseError(format("expected identifier at %d", _pos), tokens[_pos]);
+
+    // ===== Type inference: var/let x = expr; (no ':' type annotation) =====
+    if (tokens[_pos].type == (Token::Type)'=') {
+        _pos++;  // consume '='
+
+        // String literal → char[N] array (size = len + 1 for null terminator)
+        if (tokens[_pos].type == Token::TK_RAWSTRING) {
+            string s = tokens[_pos].id;
+            _pos++;
+            if (consume(tokens, (Token::Type)';').type == Token::NONE)
+                throw ParseError("expected ';'", tokens[_pos]);
+            int sz = (int)s.size() + 1;
+            vector<Expression *> vals;
+            for (unsigned char c : s) vals.push_back(new IntExp(c));
+            vals.push_back(new IntExp(0));
+            return new DeclVarSt(
+                new InitializedDeclArrayVar(id_token.id, sz, vals, VarType::CHAR, is_const));
+        }
+
+        Expression *init = parse_expression(tokens);
+        if (!init)
+            throw ParseError("expected expression after '='", tokens[_pos]);
+        if (consume(tokens, (Token::Type)';').type == Token::NONE)
+            throw ParseError("expected ';'", tokens[_pos]);
+
+        auto* si = dynamic_cast<StructInit*>(init);
+        if (si) {
+            return new DeclVarSt(new InitializedDeclVar(
+                id_token.id, VarType::STRUCT, is_const, init, si->getStructName()));
+        }
+
+        // All other expressions: defer type resolution to llvm_emit via INFERRED
+        return new DeclVarSt(
+            new InitializedDeclVar(id_token.id, VarType::INFERRED, is_const, init));
+    }
+    // ===== End type inference =====
+
     if (consume(tokens, (Token::Type)':').type == Token::NONE)
-        throw ParseError("expected ':' after variable name", tokens[_pos]);
+        throw ParseError("expected ':' or '=' after variable name", tokens[_pos]);
 
     // Struct type: var name: StructName = StructName(field=val, ...);
     if (tokens[_pos].type == Token::TK_ID && _struct_defs.count(tokens[_pos].id)) {
