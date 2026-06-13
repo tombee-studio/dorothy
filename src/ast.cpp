@@ -2,6 +2,11 @@
 #include <cstring>
 #include "../include/ast.hpp"
 
+// ===== Global struct registry =====
+map<string, StructDefInfo> g_struct_defs;
+string g_this_struct;
+map<string, string> g_var_struct_types;
+
 void Node::addTab(ostream& os, int tab) {
     for (int i = 0; i < tab; i++) {
         os << "  ";
@@ -23,9 +28,70 @@ static const char* vartype_name(VarType t) {
 
 void DeclVar::print(ostream& os, int tab) { os << vartype_name(_type) << " " << _id; }
 
+// Count total leaf (primitive) fields for bytecode slot allocation.
+static int count_leaves(const string& struct_name) {
+    int n = 0;
+    for (auto& f : g_struct_defs[struct_name].fields)
+        n += (f.type == VarType::STRUCT) ? count_leaves(f.struct_name) : 1;
+    return n;
+}
+
+// Return flat index of a dotted-path field within a struct.
+static int get_flat_index(const string& struct_name, const string& path) {
+    size_t dot = path.find('.');
+    const auto& sdef = g_struct_defs[struct_name];
+    string head = (dot == string::npos) ? path : path.substr(0, dot);
+    string tail = (dot == string::npos) ? "" : path.substr(dot + 1);
+    int cumulative = 0;
+    for (auto& f : sdef.fields) {
+        int leaf_count = (f.type == VarType::STRUCT) ? count_leaves(f.struct_name) : 1;
+        if (f.name == head) {
+            if (tail.empty()) {
+                if (f.type == VarType::STRUCT)
+                    throw CompileError(("field '" + head + "' is a struct type").c_str());
+                return cumulative;
+            }
+            if (f.type != VarType::STRUCT)
+                throw CompileError(("field '" + head + "' is not a struct").c_str());
+            int sub = get_flat_index(f.struct_name, tail);
+            return cumulative + sub;
+        }
+        cumulative += leaf_count;
+    }
+    throw CompileError(("no field '" + head + "' in struct " + struct_name).c_str());
+}
+
 void DeclVar::compile(vector<Code>& ofs, map<string, int>& vars,
                       map<string, int>& functions, int offset) {
     if (!vars[_id]) {
+        if (_type == VarType::STRUCT) {
+            // Allocate slots for all leaf fields (recursive)
+            if (!g_struct_defs.count(_struct_name))
+                throw CompileError(("undefined struct type: " + _struct_name).c_str());
+            int n = count_leaves(_struct_name);
+            int base = vars["."] + 1;
+            vars["."] += n;
+            vars[_id] = base;
+            vars["$t:" + _id] = (int)VarType::STRUCT;
+            if (_is_const) vars["$const:" + _id] = 1;
+            g_var_struct_types[_id] = _struct_name;
+            // Zero-initialize all field slots and update SP
+            for (int i = 0; i < n; i++) {
+                int slot = base + i;
+                ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
+                ofs.push_back(Code::makeCode(Code::PUSHI, slot, 0));
+                ofs.push_back(Code::makeCode(Code::POP, 3, 0));
+                ofs.push_back(Code::makeCode(Code::SUB, 0, 0));
+                ofs.push_back(Code::makeCode(Code::MOVEI, 3, 0));
+                ofs.push_back(Code::makeCode(Code::STORE, 2, 3));
+            }
+            ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
+            ofs.push_back(Code::makeCode(Code::PUSHI, vars["."], 0));
+            ofs.push_back(Code::makeCode(Code::POP, 3, 0));
+            ofs.push_back(Code::makeCode(Code::SUB, 0, 0));
+            ofs.push_back(Code::makeCode(Code::MOVE, 1, 2));
+            return;
+        }
         vars["."]++;
         vars[_id] = vars["."];
         vars["$t:" + _id] = (int)_type;
@@ -51,16 +117,112 @@ void InitializedDeclVar::print(ostream& os, int tab) {
 
 void InitializedDeclVar::compile(vector<Code>& ofs, map<string, int>& vars,
                                  map<string, int>& functions, int offset) {
-    DeclVar::compile(ofs, vars, functions, offset);  // allocate slot
-    // Push address of the new variable
+    DeclVar::compile(ofs, vars, functions, offset);  // allocate slots + zero-init
+
+    if (_type == VarType::STRUCT) {
+        // struct-to-struct copy: var a: P = b;
+        const string& raw_src = _init->getVarName();
+        string src_var = (raw_src == "$this" && !g_this_struct.empty()) ? "$this" : raw_src;
+        if (!src_var.empty() && g_var_struct_types.count(src_var)) {
+            const string& src_struct = g_var_struct_types[src_var];
+            if (src_struct != _struct_name)
+                throw CompileError(("cannot copy struct '" + src_struct +
+                                    "' into variable of type '" + _struct_name + "'").c_str());
+            int n_leaves = count_leaves(_struct_name);
+            int src_base = vars.at(src_var);
+            int dst_base = vars.at(_id);
+            for (int fi = 0; fi < n_leaves; fi++) {
+                int src_slot = src_base + fi;
+                int dst_slot = dst_base + fi;
+                // load from src field slot
+                ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
+                ofs.push_back(Code::makeCode(Code::PUSHI, src_slot, 0));
+                ofs.push_back(Code::makeCode(Code::POP, 3, 0));
+                ofs.push_back(Code::makeCode(Code::SUB, 0, 0));
+                ofs.push_back(Code::makeCode(Code::LOAD, 2, 2));
+                ofs.push_back(Code::makeCode(Code::PUSHR, 2, 0));
+                // store to dst field slot
+                ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
+                ofs.push_back(Code::makeCode(Code::PUSHI, dst_slot, 0));
+                ofs.push_back(Code::makeCode(Code::POP, 3, 0));
+                ofs.push_back(Code::makeCode(Code::SUB, 0, 0));
+                ofs.push_back(Code::makeCode(Code::POP, 3, 0));
+                ofs.push_back(Code::makeCode(Code::STORE, 2, 3));
+            }
+            return;
+        }
+
+        auto si = dynamic_cast<StructInit*>(_init);
+        if (!si)
+            throw CompileError("struct variable must be initialized with struct literal or another struct variable");
+        const auto& sdef = g_struct_defs[_struct_name];
+
+        // Set up 'this' context
+        int before_params = vars["."];
+        vars["$this"] = vars[_id];
+        g_var_struct_types["$this"] = _struct_name;
+        string prev_this_struct = g_this_struct;
+        g_this_struct = _struct_name;
+
+        // Allocate constructor param slots and assign arg values (positional)
+        const auto& ctor = sdef.constructor;
+        if (ctor) {
+            const auto& call_args = si->getArgs();
+            for (int pi = 0; pi < (int)ctor->params.size(); pi++) {
+                const string& pname = ctor->params[pi].first;
+                VarType ptype = ctor->params[pi].second;
+                vars["."]++;
+                int pslot = vars["."];
+                vars[pname] = pslot;
+                vars["$t:" + pname] = (int)ptype;
+                ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
+                ofs.push_back(Code::makeCode(Code::PUSHI, pslot, 0));
+                ofs.push_back(Code::makeCode(Code::POP, 3, 0));
+                ofs.push_back(Code::makeCode(Code::SUB, 0, 0));
+                ofs.push_back(Code::makeCode(Code::MOVE, 1, 2));
+                ofs.push_back(Code::makeCode(Code::MOVEI, 3, 0));
+                ofs.push_back(Code::makeCode(Code::STORE, 2, 3));
+                // Store positional arg value
+                if (pi < (int)call_args.size()) {
+                    call_args[pi]->compile(ofs, vars, functions, offset);
+                    ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
+                    ofs.push_back(Code::makeCode(Code::PUSHI, pslot, 0));
+                    ofs.push_back(Code::makeCode(Code::POP, 3, 0));
+                    ofs.push_back(Code::makeCode(Code::SUB, 0, 0));
+                    ofs.push_back(Code::makeCode(Code::POP, 3, 0));
+                    ofs.push_back(Code::makeCode(Code::STORE, 2, 3));
+                }
+            }
+            // Execute constructor body inline
+            ctor->body->compile(ofs, vars, functions, offset);
+
+            // Clean up: reset SP to before params, remove param vars
+            for (auto& [pname, ptype] : ctor->params) {
+                vars.erase(pname);
+                vars.erase("$t:" + pname);
+            }
+            vars["."] = before_params;
+            ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
+            ofs.push_back(Code::makeCode(Code::PUSHI, before_params, 0));
+            ofs.push_back(Code::makeCode(Code::POP, 3, 0));
+            ofs.push_back(Code::makeCode(Code::SUB, 0, 0));
+            ofs.push_back(Code::makeCode(Code::MOVE, 1, 2));
+        }
+
+        // Clean up 'this' context
+        vars.erase("$this");
+        g_var_struct_types.erase("$this");
+        g_this_struct = prev_this_struct;
+        return;
+    }
+
+    // Primitive: push address, compile init, store
     ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
     ofs.push_back(Code::makeCode(Code::PUSHI, vars[_id], 0));
     ofs.push_back(Code::makeCode(Code::POP, 3, 0));
     ofs.push_back(Code::makeCode(Code::SUB, 0, 0));
     ofs.push_back(Code::makeCode(Code::PUSHR, 2, 0));
-    // Push initial value
     _init->compile(ofs, vars, functions, offset);
-    // Store: mem[address] = value
     ofs.push_back(Code::makeCode(Code::POP, 3, 0));
     ofs.push_back(Code::makeCode(Code::POP, 2, 0));
     ofs.push_back(Code::makeCode(Code::STORE, 2, 3));
@@ -301,6 +463,8 @@ void Function::compile(vector<Code>& ofs, map<string, int>& vars,
                        map<string, int>& functions, int offset) {
     vars.clear();
     vars["."] = 0;
+    g_var_struct_types.clear();
+    g_this_struct.clear();
     functions[_id] = ofs.size() - 1 + offset;
     ofs.push_back(Code::makeCode(Code::PUSHR, 0, 0));
     ofs.push_back(Code::makeCode(Code::MOVE, 0, 1));
@@ -891,4 +1055,86 @@ void CallFuncExp::lcompile(vector<Code>& ofs, map<string, int>& vars,
                            map<string, int>& functions, int offset) {
     print(cerr, 0);
     throw CompileError("can't use as left side");
+}
+
+// ===== MemberAccess =====
+
+static void member_lcompile_impl(const string& varname, const string& path,
+                                  vector<Code>& codes, map<string, int>& vars) {
+    auto type_it = g_var_struct_types.find(varname);
+    if (type_it == g_var_struct_types.end())
+        throw CompileError(("not a struct variable: " + varname).c_str());
+    const string& struct_name = type_it->second;
+    int flat_idx = get_flat_index(struct_name, path);
+    int slot = vars.at(varname) + flat_idx;
+    codes.push_back(Code::makeCode(Code::MOVE, 2, 0));
+    codes.push_back(Code::makeCode(Code::PUSHI, slot, 0));
+    codes.push_back(Code::makeCode(Code::POP, 3, 0));
+    codes.push_back(Code::makeCode(Code::SUB, 0, 0));
+    codes.push_back(Code::makeCode(Code::PUSHR, 2, 0));
+}
+
+void MemberAccess::print(ostream& os, int tab) {
+    _object->print(os, tab);
+    os << "." << _member;
+}
+
+void MemberAccess::compile(vector<Code>& codes, map<string, int>& vars,
+                            map<string, int>& functions, int offset) {
+    member_lcompile_impl(_object->getVarName(), getFieldPath(), codes, vars);
+    codes.push_back(Code::makeCode(Code::POP, 2, 0));
+    codes.push_back(Code::makeCode(Code::LOAD, 2, 2));
+    codes.push_back(Code::makeCode(Code::PUSHR, 2, 0));
+}
+
+void MemberAccess::lcompile(vector<Code>& codes, map<string, int>& vars,
+                             map<string, int>& functions, int offset) {
+    member_lcompile_impl(_object->getVarName(), getFieldPath(), codes, vars);
+}
+
+VarType MemberAccess::compile_type(map<string, int>& vars) const {
+    const string& varname = _object->getVarName();
+    auto it = g_var_struct_types.find(varname);
+    if (it == g_var_struct_types.end()) return VarType::LONG;
+    try {
+        // Use get_flat_index to validate the path, then derive type via struct walk
+        VarType t = VarType::LONG;
+        const string& path = getFieldPath();
+        size_t dot = path.find('.');
+        string head = (dot == string::npos) ? path : path.substr(0, dot);
+        const auto& sdef = g_struct_defs[it->second];
+        int fidx = sdef.fieldIndex(head);
+        if (fidx < 0) return VarType::LONG;
+        if (dot == string::npos) return canonical_type(sdef.fields[fidx].type);
+        // Recurse into sub-struct - simplified: just return LONG for deep paths
+        return VarType::LONG;
+    } catch (...) {
+        return VarType::LONG;
+    }
+}
+
+// ===== ThisExpr =====
+
+void ThisExpr::print(ostream& os, int tab) { os << "this"; }
+
+void ThisExpr::compile(vector<Code>& codes, map<string, int>& vars,
+                       map<string, int>& functions, int offset) {
+    // 'this' alone as rval doesn't make sense; used only via MemberAccess
+    throw CompileError("'this' cannot be used as a standalone expression");
+}
+
+void ThisExpr::lcompile(vector<Code>& codes, map<string, int>& vars,
+                        map<string, int>& functions, int offset) {
+    throw CompileError("'this' cannot be used as a standalone lvalue");
+}
+
+// ===== StructInit::print =====
+
+void StructInit::print(ostream& os, int tab) {
+    os << _struct_name << "(";
+    for (int i = 0; i < (int)_args.size(); i++) {
+        if (i > 0) os << ", ";
+        _args[i]->print(os, tab);
+    }
+    os << ")";
 }

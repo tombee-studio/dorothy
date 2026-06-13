@@ -15,6 +15,7 @@ using std::vector;
 using std::ostream;
 using std::string;
 using std::map;
+using std::pair;
 using std::endl;
 using std::cerr;
 using std::ifstream;
@@ -24,6 +25,35 @@ using std::runtime_error;
 
 class Expression;
 class Statement;
+
+// ===== Struct type info =====
+
+struct FieldInfo {
+    string name;
+    VarType type;
+    string struct_name;  // non-empty when type == STRUCT
+};
+
+struct ConstructorInfo {
+    vector<pair<string, VarType>> params;
+    Statement *body;
+};
+
+struct StructDefInfo {
+    string name;
+    vector<FieldInfo> fields;
+    ConstructorInfo *constructor = nullptr;
+
+    int fieldIndex(const string &fname) const {
+        for (int i = 0; i < (int)fields.size(); i++)
+            if (fields[i].name == fname) return i;
+        return -1;
+    }
+};
+
+extern map<string, StructDefInfo> g_struct_defs;
+extern string g_this_struct;
+extern map<string, string> g_var_struct_types;
 
 class CompileError : public std::runtime_error {
  public:
@@ -45,14 +75,17 @@ class DeclVar : public Node {
     string _id;
     VarType _type;
     bool _is_const;
+    string _struct_name;  // non-empty when _type == VarType::STRUCT
 
  public:
-    DeclVar(string id, VarType type = VarType::LONG, bool is_const = false)
-        : _id(id), _type(type), _is_const(is_const) {}
+    DeclVar(string id, VarType type = VarType::LONG, bool is_const = false,
+            string struct_name = "")
+        : _id(id), _type(type), _is_const(is_const), _struct_name(struct_name) {}
 
     VarType getType() const { return _type; }
     const string& getId() const { return _id; }
     bool isConst() const { return _is_const; }
+    const string& getStructName() const { return _struct_name; }
 
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
@@ -65,8 +98,9 @@ class InitializedDeclVar : public DeclVar {
     Expression *_init;
 
  public:
-    InitializedDeclVar(string id, VarType type, bool is_const, Expression *init)
-        : DeclVar(id, type, is_const), _init(init) {}
+    InitializedDeclVar(string id, VarType type, bool is_const, Expression *init,
+                       string struct_name = "")
+        : DeclVar(id, type, is_const, struct_name), _init(init) {}
 
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
@@ -107,15 +141,22 @@ class Function : public Node {
     string _id;
     vector<DeclVar *> _args;
     Statement *_body;
+    VarType _ret_type;
+    string _ret_struct_name;
 
  public:
-    Function(string id, vector<DeclVar *> args, Statement *body)
-        : _id(id), _args(args), _body(body) {}
+    Function(string id, vector<DeclVar *> args, Statement *body,
+             VarType ret_type = VarType::LONG, string ret_struct_name = "")
+        : _id(id), _args(args), _body(body),
+          _ret_type(ret_type), _ret_struct_name(ret_struct_name) {}
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                          int);
     virtual void llvm_emit(LLVMGenCtx &);
+    void llvm_pre_register(LLVMGenCtx &);
     const string &getName() const { return _id; }
+    VarType getRetType() const { return _ret_type; }
+    const string &getRetStructName() const { return _ret_struct_name; }
     virtual bool isImport() const { return false; }
 };
 
@@ -585,10 +626,74 @@ class CallFuncExp : public Expression {
 
  public:
     CallFuncExp(string id, vector<Expression *> args) : _id(id), _args(args) {}
+    const string &getId() const { return _id; }
+    const vector<Expression *> &getArgs() const { return _args; }
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                          int);
     virtual void lcompile(vector<Code> &, map<string, int> &,
                           map<string, int> &, int);
     virtual string llvm_rval(LLVMGenCtx &);
+};
+
+// ===== Struct expression nodes =====
+
+class StructInit : public Expression {
+    string _struct_name;
+    vector<Expression *> _args;  // positional args matching constructor params
+
+ public:
+    StructInit(string struct_name, vector<Expression *> args)
+        : _struct_name(struct_name), _args(std::move(args)) {}
+
+    const string& getStructName() const { return _struct_name; }
+    const vector<Expression *>& getArgs() const { return _args; }
+
+    virtual void print(ostream &, int tab);
+    // StructInit cannot be used as a standalone expression; only via InitializedDeclVar
+    virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &, int) {}
+    virtual void lcompile(vector<Code> &, map<string, int> &, map<string, int> &, int) {}
+    virtual string llvm_rval(LLVMGenCtx &) { return "0"; }
+};
+
+class MemberAccess : public Expression {
+    Expression *_object;
+    string _member;
+
+ public:
+    MemberAccess(Expression *object, string member)
+        : _object(object), _member(member) {}
+
+    Expression *getObject() const { return _object; }
+    const string &getMember() const { return _member; }
+
+    // Returns the full dotted path from the root variable, e.g. "a.x" for outer.a.x
+    string getFieldPath() const {
+        auto ma = dynamic_cast<const MemberAccess *>(_object);
+        if (ma) return ma->getFieldPath() + "." + _member;
+        return _member;
+    }
+
+    virtual void print(ostream &, int tab);
+    virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &, int);
+    virtual void lcompile(vector<Code> &, map<string, int> &, map<string, int> &, int);
+    virtual string llvm_rval(LLVMGenCtx &);
+    virtual string llvm_lval(LLVMGenCtx &);
+    virtual VarType llvm_etype(LLVMGenCtx &) const;
+    virtual VarType llvm_declared_type(LLVMGenCtx &) const;
+    virtual VarType compile_type(map<string, int> &) const;
+    virtual const string& getVarName() const { return _object->getVarName(); }
+};
+
+class ThisExpr : public Expression {
+ public:
+    virtual void print(ostream &, int tab);
+    virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &, int);
+    virtual void lcompile(vector<Code> &, map<string, int> &, map<string, int> &, int);
+    virtual string llvm_rval(LLVMGenCtx &);
+    virtual string llvm_lval(LLVMGenCtx &);
+    virtual const string& getVarName() const {
+        static string this_key = "$this";
+        return this_key;
+    }
 };

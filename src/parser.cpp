@@ -1,12 +1,97 @@
 /* Copyright 2022(Tomoya Bansho@tomoya-kwansei) */
 #include "../include/parser.hpp"
 
+static bool is_type_keyword(Token::Type t) {
+    return t == Token::KW_INT || t == Token::KW_CHAR || t == Token::KW_LONG ||
+           t == Token::KW_FLOAT || t == Token::KW_DOUBLE;
+}
+
+static VarType token_to_vartype(Token::Type t) {
+    switch (t) {
+        case Token::KW_CHAR:   return VarType::CHAR;
+        case Token::KW_INT:    return VarType::INT;
+        case Token::KW_LONG:   return VarType::LONG;
+        case Token::KW_FLOAT:  return VarType::FLOAT;
+        case Token::KW_DOUBLE: return VarType::DOUBLE;
+        default:               return VarType::LONG;
+    }
+}
+
 vector<Function *> Parser::parse(vector<Token> &tokens) {
     _pos = 0;
+    _struct_defs.clear();
+    g_struct_defs.clear();
     while (consume(tokens, Token::TK_EOF).type == Token::NONE) {
-        _functions.push_back(parse_function(tokens));
+        if (tokens[_pos].type == Token::KW_STRUCT) {
+            parse_struct_def(tokens);
+        } else {
+            _functions.push_back(parse_function(tokens));
+        }
     }
     return _functions;
+}
+
+void Parser::parse_struct_def(vector<Token> &tokens) {
+    consume(tokens, Token::KW_STRUCT);
+    Token name_tok = consume(tokens, Token::TK_ID);
+    if (name_tok.type == Token::NONE)
+        throw ParseError("expected struct name", tokens[_pos]);
+
+    if (consume(tokens, (Token::Type)'{').type == Token::NONE)
+        throw ParseError("expected '{' in struct definition", tokens[_pos]);
+
+    StructDefInfo sdef;
+    sdef.name = name_tok.id;
+
+    while (tokens[_pos].type != (Token::Type)'}') {
+        if (tokens[_pos].type == Token::KW_VAR) {
+            // field: var name: type;
+            _pos++;
+            Token fname = consume(tokens, Token::TK_ID);
+            if (fname.type == Token::NONE)
+                throw ParseError("expected field name", tokens[_pos]);
+            if (consume(tokens, (Token::Type)':').type == Token::NONE)
+                throw ParseError("expected ':' in field declaration", tokens[_pos]);
+            if (tokens[_pos].type == Token::TK_ID && _struct_defs.count(tokens[_pos].id)) {
+                string field_struct = tokens[_pos].id;
+                _pos++;
+                if (consume(tokens, (Token::Type)';').type == Token::NONE)
+                    throw ParseError("expected ';' after field declaration", tokens[_pos]);
+                sdef.fields.push_back({fname.id, VarType::STRUCT, field_struct});
+            } else if (is_type_keyword(tokens[_pos].type)) {
+                VarType ftype = token_to_vartype(tokens[_pos].type);
+                _pos++;
+                if (consume(tokens, (Token::Type)';').type == Token::NONE)
+                    throw ParseError("expected ';' after field declaration", tokens[_pos]);
+                sdef.fields.push_back({fname.id, ftype, ""});
+            } else {
+                throw ParseError("expected type keyword or struct name in field declaration",
+                                 tokens[_pos]);
+            }
+        } else if (tokens[_pos].type == Token::KW_CONSTRUCTOR) {
+            // constructor(params) { body }
+            _pos++;
+            auto params_decl = parse_declargs(tokens);
+            for (auto *d : params_decl)
+                if (d->getType() == VarType::STRUCT)
+                    throw ParseError("struct types cannot be used as constructor parameters",
+                                     tokens[_pos]);
+            vector<pair<string, VarType>> params;
+            for (auto *d : params_decl)
+                params.push_back({d->getId(), d->getType()});
+            auto body = parse_block(tokens);
+            auto ci = new ConstructorInfo{params, body};
+            sdef.constructor = ci;
+        } else {
+            throw ParseError("expected 'var' or 'constructor' in struct body", tokens[_pos]);
+        }
+    }
+
+    if (consume(tokens, (Token::Type)'}').type == Token::NONE)
+        throw ParseError("expected '}' to close struct", tokens[_pos]);
+
+    _struct_defs[name_tok.id] = sdef;
+    g_struct_defs[name_tok.id] = sdef;
 }
 
 Function *Parser::parse_function(vector<Token> &tokens) {
@@ -29,24 +114,19 @@ Function *Parser::parse_function(vector<Token> &tokens) {
     if (id_token.type == Token::NONE)
         throw ParseError(format("position: %d", _pos), tokens[_pos]);
     auto declargs = parse_declargs(tokens);
-    auto block = parse_block(tokens);
-    return new Function(id_token.id, declargs, block);
-}
-
-static bool is_type_keyword(Token::Type t) {
-    return t == Token::KW_INT || t == Token::KW_CHAR || t == Token::KW_LONG ||
-           t == Token::KW_FLOAT || t == Token::KW_DOUBLE;
-}
-
-static VarType token_to_vartype(Token::Type t) {
-    switch (t) {
-        case Token::KW_CHAR:   return VarType::CHAR;
-        case Token::KW_INT:    return VarType::INT;
-        case Token::KW_LONG:   return VarType::LONG;
-        case Token::KW_FLOAT:  return VarType::FLOAT;
-        case Token::KW_DOUBLE: return VarType::DOUBLE;
-        default:               return VarType::LONG;
+    VarType ret_type = VarType::LONG;
+    string ret_struct_name = "";
+    if (consume(tokens, Token::TK_ARROW).type != Token::NONE) {
+        Token struct_tok = consume(tokens, Token::TK_ID);
+        if (struct_tok.type == Token::NONE)
+            throw ParseError("expected struct name after '->'", tokens[_pos]);
+        if (!_struct_defs.count(struct_tok.id))
+            throw ParseError("unknown struct type: " + struct_tok.id, tokens[_pos]);
+        ret_type = VarType::STRUCT;
+        ret_struct_name = struct_tok.id;
     }
+    auto block = parse_block(tokens);
+    return new Function(id_token.id, declargs, block, ret_type, ret_struct_name);
 }
 
 vector<DeclVar *> Parser::parse_declargs(vector<Token> &tokens) {
@@ -71,6 +151,11 @@ DeclVar *Parser::parse_declparam(vector<Token> &tokens) {
         throw ParseError(format("expected parameter name at %d", _pos), tokens[_pos]);
     if (consume(tokens, (Token::Type)':').type == Token::NONE)
         throw ParseError("expected ':' after parameter name", tokens[_pos]);
+    if (tokens[_pos].type == Token::TK_ID && _struct_defs.count(tokens[_pos].id)) {
+        string struct_name = tokens[_pos].id;
+        _pos++;
+        return new DeclVar(id_token.id, VarType::STRUCT, false, struct_name);
+    }
     if (!is_type_keyword(tokens[_pos].type))
         throw ParseError("expected type keyword after ':'", tokens[_pos]);
     VarType vtype = token_to_vartype(tokens[_pos].type);
@@ -158,8 +243,23 @@ Statement *Parser::parse_declvarst(vector<Token> &tokens) {
         throw ParseError(format("expected identifier at %d", _pos), tokens[_pos]);
     if (consume(tokens, (Token::Type)':').type == Token::NONE)
         throw ParseError("expected ':' after variable name", tokens[_pos]);
+
+    // Struct type: var name: StructName = StructName(field=val, ...);
+    if (tokens[_pos].type == Token::TK_ID && _struct_defs.count(tokens[_pos].id)) {
+        string struct_name = tokens[_pos].id;
+        _pos++;
+        if (consume(tokens, (Token::Type)'=').type == Token::NONE)
+            throw ParseError("struct variable requires an initializer", tokens[_pos]);
+        auto init = parse_expression(tokens);
+        if (!init) throw ParseError("expected struct initializer expression", tokens[_pos]);
+        if (consume(tokens, (Token::Type)';').type == Token::NONE)
+            throw ParseError("expected ';'", tokens[_pos]);
+        return new DeclVarSt(
+            new InitializedDeclVar(id_token.id, VarType::STRUCT, is_const, init, struct_name));
+    }
+
     if (!is_type_keyword(tokens[_pos].type))
-        throw ParseError("expected type keyword after ':'", tokens[_pos]);
+        throw ParseError("expected type keyword or struct name after ':'", tokens[_pos]);
     VarType vtype = token_to_vartype(tokens[_pos].type);
     _pos++;
 
@@ -353,22 +453,54 @@ Expression *Parser::parse_unary(vector<Token> &tokens) {
 }
 
 Expression *Parser::parse_array_index(vector<Token> &tokens) {
-    Expression *pointer = parse_term(tokens);
-    if (consume(tokens, (Token::Type)'[').type != Token::NONE) {
-        Expression *index = parse_expression(tokens);
-        if (consume(tokens, (Token::Type)']').type != Token::NONE)
-            return new ArrayIndex(pointer, index);
-        else
-            throw ParseError(format("expected ']'"), tokens[_pos]);
+    Expression *base = parse_term(tokens);
+    while (true) {
+        if (consume(tokens, (Token::Type)'[').type != Token::NONE) {
+            Expression *index = parse_expression(tokens);
+            if (consume(tokens, (Token::Type)']').type != Token::NONE) {
+                base = new ArrayIndex(base, index);
+            } else {
+                throw ParseError(format("expected ']'"), tokens[_pos]);
+            }
+        } else if (consume(tokens, (Token::Type)'.').type != Token::NONE) {
+            Token member = consume(tokens, Token::TK_ID);
+            if (member.type == Token::NONE)
+                throw ParseError("expected member name after '.'", tokens[_pos]);
+            base = new MemberAccess(base, member.id);
+        } else {
+            break;
+        }
     }
-    return pointer;
+    return base;
+}
+
+Expression *Parser::parse_struct_init(vector<Token> &tokens) {
+    if (tokens[_pos].type != Token::TK_ID) return NULL;
+    if (!_struct_defs.count(tokens[_pos].id)) return NULL;
+    if (tokens[_pos + 1].type != (Token::Type)'(') return NULL;
+    string struct_name = tokens[_pos].id;
+    _pos += 2;  // consume StructName and (
+    vector<Expression *> args;
+    while (tokens[_pos].type != (Token::Type)')') {
+        auto val = parse_expression(tokens);
+        if (!val) throw ParseError("expected expression in struct initializer", tokens[_pos]);
+        args.push_back(val);
+        if (tokens[_pos].type != (Token::Type)')') {
+            if (consume(tokens, (Token::Type)',').type == Token::NONE)
+                throw ParseError("expected ',' or ')' in struct initializer", tokens[_pos]);
+        }
+    }
+    consume(tokens, (Token::Type)')');
+    return new StructInit(struct_name, std::move(args));
 }
 
 Expression *Parser::parse_term(vector<Token> &tokens) {
     Token token;
     Expression *exp;
+    if ((exp = parse_struct_init(tokens))) return exp;
     if ((exp = parse_call(tokens))) return exp;
     if ((exp = parse_integer(tokens))) return exp;
+    if (consume(tokens, Token::KW_THIS).type != Token::NONE) return new ThisExpr();
     if ((token = consume(tokens, Token::TK_ID)).type != Token::NONE) {
         return new Variable(token.id);
     }

@@ -8,6 +8,7 @@ enum class VarType {
     LONG,    // i64 - 8 byte integer
     FLOAT,   // float  - 4 byte floating point
     DOUBLE,  // double - 8 byte floating point
+    STRUCT,  // user-defined struct type
 };
 
 inline std::string llvm_type_str(VarType t) {
