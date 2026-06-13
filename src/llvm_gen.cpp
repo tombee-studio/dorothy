@@ -459,6 +459,32 @@ void DeclVar::llvm_emit(LLVMGenCtx& ctx) {
 // ===== InitializedDeclVar =====
 
 void InitializedDeclVar::llvm_emit(LLVMGenCtx& ctx) {
+    // ===== Type inference: resolve INFERRED before allocating =====
+    if (_type == VarType::INFERRED) {
+        // Struct-returning function call: var p = makePoint();
+        auto* cfe = dynamic_cast<CallFuncExp*>(_init);
+        if (cfe && ctx.func_return_struct.count(cfe->getId())) {
+            _type = VarType::STRUCT;
+            _struct_name = ctx.func_return_struct[cfe->getId()];
+        }
+        // Variable holding a struct: var p2 = p1;
+        else if (auto* var_expr = dynamic_cast<Variable*>(_init)) {
+            auto sit = ctx.struct_var_types.find(var_expr->getVarName());
+            if (sit != ctx.struct_var_types.end()) {
+                _type = VarType::STRUCT;
+                _struct_name = sit->second;
+            } else {
+                // Use canonical type: LONG for integers, DOUBLE for floats
+                _type = _init->llvm_etype(ctx);
+            }
+        }
+        // Scalar expression: integer → LONG, float → DOUBLE
+        else {
+            _type = _init->llvm_etype(ctx);
+        }
+    }
+    // ===== End type inference =====
+
     DeclVar::llvm_emit(ctx);  // alloca + zero-init + type/const tracking
 
     if (_type == VarType::STRUCT) {

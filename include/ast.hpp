@@ -113,8 +113,8 @@ class DeclArrayVar : public DeclVar {
     int _num;
 
  public:
-    DeclArrayVar(string id, int num, VarType type = VarType::LONG)
-        : DeclVar(id, type, false), _num(num) {}
+    DeclArrayVar(string id, int num, VarType type = VarType::LONG, bool is_const = false)
+        : DeclVar(id, type, is_const), _num(num) {}
 
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
@@ -127,8 +127,8 @@ class InitializedDeclArrayVar : public DeclArrayVar {
 
  public:
     InitializedDeclArrayVar(string id, int num, vector<Expression *> values,
-                            VarType type = VarType::LONG)
-        : DeclArrayVar(id, num, type), _values(values) {}
+                            VarType type = VarType::LONG, bool is_const = false)
+        : DeclArrayVar(id, num, type, is_const), _values(values) {}
 
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
