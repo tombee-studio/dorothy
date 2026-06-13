@@ -98,11 +98,21 @@ Function *Parser::parse_function(vector<Token> &tokens) {
     if (consume(tokens, Token::KW_FUNC).type == Token::NONE) {
         if (consume(tokens, Token::KW_IMPORT).type == Token::NONE) {
             throw ParseError(format("position: %d", _pos), tokens[_pos]);
-        } else {
+        }
+        // C header import: import "stdio.h";
+        if (tokens[_pos].type == Token::TK_RAWSTRING) {
+            string header_path = tokens[_pos].id;
+            _pos++;
+            if (consume(tokens, (Token::Type)';').type == Token::NONE)
+                throw ParseError("expected ';' after header path", tokens[_pos]);
+            return new ImportCHeader(header_path);
+        }
+        // Dorothy-style import: import funcname;
+        {
             Token id_token = consume(tokens, Token::TK_ID);
             vector<DeclVar *> args;
             if (id_token.type == Token::NONE)
-                throw ParseError("expected ID", tokens[_pos]);
+                throw ParseError("expected ID or header string", tokens[_pos]);
             if (consume(tokens, (Token::Type)';').type != Token::NONE) {
                 return new ImportFunction(id_token.id, args);
             } else {
@@ -194,6 +204,15 @@ DeclVar *Parser::parse_declvar(vector<Token> &tokens) {
 }
 
 vector<Expression *> Parser::parse_array_initializer(vector<Token> &tokens) {
+    // String literal shorthand: "hello" expands to {'h','e','l','l','o',0}
+    if (tokens[_pos].type == Token::TK_RAWSTRING) {
+        string s = tokens[_pos].id;
+        _pos++;
+        vector<Expression *> exprs;
+        for (unsigned char c : s) exprs.push_back(new IntExp(c));
+        exprs.push_back(new IntExp(0));
+        return exprs;
+    }
     if (consume(tokens, (Token::Type)'{').type == Token::NONE) {
         throw ParseError("expected '{'", tokens[_pos]);
     }

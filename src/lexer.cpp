@@ -95,18 +95,26 @@ bool Lexer::tokenize_char(string p, int* ppos) {
 bool Lexer::tokenize_str(string p, int* ppos) {
     if (p[*ppos] != '\"') return false;
     (*ppos)++;
-    tokens.push_back(Token::make_operator((Token::Type)'{'));
-    while (true) {
-        if (p[*ppos] == '\"') {
-            break;
+    string s;
+    while (p[*ppos] != '\"') {
+        if (p[*ppos] == '\\') {
+            (*ppos)++;
+            switch (p[*ppos]) {
+                case 'n':  s += '\n'; break;
+                case 't':  s += '\t'; break;
+                case 'r':  s += '\r'; break;
+                case '\\': s += '\\'; break;
+                case '"':  s += '"';  break;
+                case '0':  s += '\0'; break;
+                default:   s += p[*ppos]; break;
+            }
+        } else {
+            s += p[*ppos];
         }
-        tokens.push_back(Token::make_int(p[*ppos]));
-        tokens.push_back(Token::make_operator((Token::Type)','));
         (*ppos)++;
     }
-    tokens.push_back(Token::make_int(0));
-    tokens.push_back(Token::make_operator((Token::Type)'}'));
-    (*ppos)++;
+    (*ppos)++;  // consume closing "
+    tokens.push_back(Token::make_string(s));
     return true;
 }
 
