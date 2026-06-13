@@ -164,10 +164,10 @@ class ImportFunction : public Function {
  public:
     ImportFunction(string id, vector<DeclVar *> args)
         : Function(id, args, NULL) {}
-    virtual void print(ostream &, int tab);
-    virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
-                         int);
-    virtual void llvm_emit(LLVMGenCtx &);
+    void print(ostream &, int tab) override;
+    void compile(vector<Code> &, map<string, int> &, map<string, int> &,
+                 int) override;
+    void llvm_emit(LLVMGenCtx &) override;
     bool isImport() const override { return true; }
 };
 
@@ -179,10 +179,10 @@ class ImportCHeader : public Function {
     explicit ImportCHeader(string header_path)
         : Function("", {}, nullptr), _header_path(header_path) {}
     const string &getHeaderPath() const { return _header_path; }
-    virtual void print(ostream &, int) {}
-    virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
-                         int) {}
-    virtual void llvm_emit(LLVMGenCtx &);
+    void print(ostream &, int) override {}
+    void compile(vector<Code> &, map<string, int> &, map<string, int> &,
+                 int) override {}
+    void llvm_emit(LLVMGenCtx &) override;
     bool isImport() const override { return true; }
 };
 
@@ -536,14 +536,14 @@ class IntExp : public Expression {
  public:
     explicit IntExp(int int_val) : _int_val(int_val) {}
 
-    virtual void print(ostream &, int tab);
-    virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
-                         int);
-    virtual void lcompile(vector<Code> &, map<string, int> &,
-                          map<string, int> &, int);
-    virtual string llvm_rval(LLVMGenCtx &);
+    void print(ostream &, int tab) override;
+    void compile(vector<Code> &, map<string, int> &, map<string, int> &,
+                 int) override;
+    void lcompile(vector<Code> &, map<string, int> &,
+                  map<string, int> &, int) override;
+    string llvm_rval(LLVMGenCtx &) override;
     // Integer literals are int-sized (matching C's default type for integer constants)
-    virtual VarType llvm_declared_type(LLVMGenCtx &) const override { return VarType::INT; }
+    VarType llvm_declared_type(LLVMGenCtx &) const override { return VarType::INT; }
 };
 
 class FloatExp : public Expression {
