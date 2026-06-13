@@ -3,7 +3,7 @@ name: Update Task Status on Merge
 on:
   pull_request:
     branches:
-      - develop
+      - develop-llvm
     types:
       - closed
 
