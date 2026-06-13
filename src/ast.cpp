@@ -17,11 +17,13 @@ void Expression::print(ostream& os, int tab) { os << "<EXP>"; }
 
 static const char* vartype_name(VarType t) {
     switch (t) {
-        case VarType::CHAR:   return "char";
-        case VarType::INT:    return "int";
-        case VarType::LONG:   return "long";
-        case VarType::FLOAT:  return "float";
-        case VarType::DOUBLE: return "double";
+        case VarType::CHAR:     return "char";
+        case VarType::INT:      return "int";
+        case VarType::LONG:     return "long";
+        case VarType::FLOAT:    return "float";
+        case VarType::DOUBLE:   return "double";
+        case VarType::STRUCT:   return "struct";
+        case VarType::INFERRED: return "auto";
     }
     return "int";
 }

@@ -14,11 +14,13 @@ enum class VarType {
 
 inline std::string llvm_type_str(VarType t) {
     switch (t) {
-        case VarType::CHAR:   return "i8";
-        case VarType::INT:    return "i32";
-        case VarType::LONG:   return "i64";
-        case VarType::FLOAT:  return "float";
-        case VarType::DOUBLE: return "double";
+        case VarType::CHAR:     return "i8";
+        case VarType::INT:      return "i32";
+        case VarType::LONG:     return "i64";
+        case VarType::FLOAT:    return "float";
+        case VarType::DOUBLE:   return "double";
+        case VarType::STRUCT:   return "ptr";
+        case VarType::INFERRED: return "i64";
     }
     return "i64";
 }
