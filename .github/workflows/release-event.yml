@@ -1,0 +1,61 @@
+name: Release Event Management
+
+on:
+  pull_request:
+    branches:
+      - releases
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+      - closed
+
+jobs:
+  validate-event-id:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Event ID in PR body
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          EVENT_ID=$(echo "$PR_BODY" | grep -oE 'Event: [0-9]+' | head -1 | grep -oE '[0-9]+')
+          if [ -z "$EVENT_ID" ]; then
+            echo "::error::PRの本文に 'Event: <event_id>' が含まれていません"
+            exit 1
+          fi
+          echo "Event ID: $EVENT_ID"
+
+  update-event-status:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Extract event ID and update status
+        env:
+          TOOL_API_URL: ${{ secrets.TOOL_API_URL }}
+          TOOL_API_KEY: ${{ secrets.TOOL_API_KEY }}
+          EVENT_STAUS_RELEASE_ID: ${{ secrets.EVENT_STAUS_RELEASE_ID }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          EVENT_ID=$(echo "$PR_BODY" | grep -oE 'Event: [0-9]+' | head -1 | grep -oE '[0-9]+')
+          if [ -z "$EVENT_ID" ]; then
+            echo "::error::PRの本文に 'Event: <event_id>' が含まれていません"
+            exit 1
+          fi
+
+          echo "イベント #$EVENT_ID のステータスを更新中..."
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X PATCH "${TOOL_API_URL}event_app/events/${EVENT_ID}/" \
+            -H "X-API-Key: $TOOL_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"status\": $EVENT_STAUS_RELEASE_ID}")
+
+          if [ "$RESPONSE" = "200" ] || [ "$RESPONSE" = "204" ]; then
+            echo "イベント #$EVENT_ID のステータスをリリース済みに更新しました"
+          else
+            echo "::error::イベント #$EVENT_ID のステータス更新に失敗しました (HTTP $RESPONSE)"
+            exit 1
+          fi

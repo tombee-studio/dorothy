@@ -1,0 +1,53 @@
+name: Update Task Status on Merge
+
+on:
+  pull_request:
+    branches:
+      - develop
+    types:
+      - closed
+
+jobs:
+  update-task-status:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract task IDs and update status
+        env:
+          TOOL_API_URL: ${{ secrets.TOOL_API_URL }}
+          TOOL_API_KEY: ${{ secrets.TOOL_API_KEY }}
+          TOOL_USER_ID: ${{ secrets.TOOL_USER_ID }}
+          TASK_STAUS_MERGE_ID: ${{ secrets.TASK_STAUS_MERGE_ID }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          TASK_IDS=$(git log --pretty=format:"%B" "$BASE_SHA..$HEAD_SHA" \
+            | grep -oE 'Task: [0-9]+' \
+            | grep -oE '[0-9]+' \
+            | sort -u)
+
+          if [ -z "$TASK_IDS" ]; then
+            echo "タスクIDが見つかりませんでした"
+            exit 0
+          fi
+
+          for TASK_ID in $TASK_IDS; do
+            echo "タスク #$TASK_ID のステータスを更新中..."
+            RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+              -X PATCH "${TOOL_API_URL}task_app/tasks/${TASK_ID}/" \
+              -H "X-API-Key: $TOOL_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "{\"status\": $TASK_STAUS_MERGE_ID}")
+
+            if [ "$RESPONSE" = "200" ] || [ "$RESPONSE" = "204" ]; then
+              echo "タスク #$TASK_ID のステータスを更新しました"
+            else
+              echo "タスク #$TASK_ID のステータス更新に失敗しました (HTTP $RESPONSE)"
+              exit 1
+            fi
+          done
