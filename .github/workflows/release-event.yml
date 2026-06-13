@@ -21,7 +21,7 @@ jobs:
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          EVENT_ID=$(echo "$PR_BODY" | grep -oE 'Event: [0-9]+' | head -1 | grep -oE '[0-9]+')
+          EVENT_ID=$(echo "$PR_BODY" | grep -oE 'Event: \[?[0-9]+' | head -1 | grep -oE '[0-9]+')
           if [ -z "$EVENT_ID" ]; then
             echo "::error::PRの本文に 'Event: <event_id>' が含まれていません"
             exit 1
@@ -40,7 +40,7 @@ jobs:
           EVENT_STAUS_RELEASE_ID: ${{ secrets.EVENT_STAUS_RELEASE_ID }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          EVENT_ID=$(echo "$PR_BODY" | grep -oE 'Event: [0-9]+' | head -1 | grep -oE '[0-9]+')
+          EVENT_ID=$(echo "$PR_BODY" | grep -oE 'Event: \[?[0-9]+' | head -1 | grep -oE '[0-9]+')
           if [ -z "$EVENT_ID" ]; then
             echo "::error::PRの本文に 'Event: <event_id>' が含まれていません"
             exit 1

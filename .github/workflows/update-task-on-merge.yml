@@ -27,7 +27,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           TASK_IDS=$(git log --pretty=format:"%B" "$BASE_SHA..$HEAD_SHA" \
-            | grep -oE 'Task: [0-9]+' \
+            | grep -oE 'Task: \[?[0-9]+' \
             | grep -oE '[0-9]+' \
             | sort -u)
 

@@ -27,7 +27,7 @@ fi
 
 for COMMIT_ID in $COMMITS; do
   COMMIT_MSG=$(git log -1 --pretty=%B "$COMMIT_ID")
-  TASK_ID=$(echo "$COMMIT_MSG" | grep -oE 'Task: [0-9]+' | head -1 | grep -oE '[0-9]+')
+  TASK_ID=$(echo "$COMMIT_MSG" | grep -oE 'Task: \[?[0-9]+' | grep -oE '[0-9]+' | head -1)
 
   if [ -z "$TASK_ID" ]; then
     continue
