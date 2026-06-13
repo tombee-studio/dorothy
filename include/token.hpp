@@ -25,15 +25,34 @@ struct Token {
         KW_FUNC = 12,
         KW_IMPORT = 13,
         KW_FOR,
+        KW_CHAR,
+        KW_LONG,
+        KW_FLOAT,
+        KW_DOUBLE,
+        TK_FLOAT,
+        KW_VAR,
+        KW_LET,
+        KW_STRUCT,
+        KW_CONSTRUCTOR,
+        KW_THIS,
+        TK_ARROW,   // ->
     } type;
 
     int int_val;
+    double float_val;
     string id;
 
     static Token make_int(int value) {
         Token token;
         token.type = TK_INT;
         token.int_val = value;
+        return token;
+    }
+
+    static Token make_float(double value) {
+        Token token;
+        token.type = TK_FLOAT;
+        token.float_val = value;
         return token;
     }
 

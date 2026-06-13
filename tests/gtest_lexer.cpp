@@ -198,3 +198,68 @@ TEST(LexerTest, LexUndefinedTokenThrows) {
     Lexer lexer;
     EXPECT_THROW(lexer.lex("@"), LexerError);
 }
+
+// --- 型キーワード ---
+
+TEST(LexerTest, LexKeywordChar) {
+    Lexer lexer;
+    auto tokens = lexer.lex("char");
+    ASSERT_EQ(tokens.size(), 2u);
+    EXPECT_EQ(tokens[0].type, Token::KW_CHAR);
+}
+
+TEST(LexerTest, LexKeywordLong) {
+    Lexer lexer;
+    auto tokens = lexer.lex("long");
+    ASSERT_EQ(tokens.size(), 2u);
+    EXPECT_EQ(tokens[0].type, Token::KW_LONG);
+}
+
+TEST(LexerTest, LexKeywordFloat) {
+    Lexer lexer;
+    auto tokens = lexer.lex("float");
+    ASSERT_EQ(tokens.size(), 2u);
+    EXPECT_EQ(tokens[0].type, Token::KW_FLOAT);
+}
+
+TEST(LexerTest, LexKeywordDouble) {
+    Lexer lexer;
+    auto tokens = lexer.lex("double");
+    ASSERT_EQ(tokens.size(), 2u);
+    EXPECT_EQ(tokens[0].type, Token::KW_DOUBLE);
+}
+
+TEST(LexerTest, TypeKeywordNotMatchedInsideIdentifier) {
+    Lexer lexer;
+    // "charset" は char キーワードではなく識別子として読まれる
+    auto tokens = lexer.lex("charset");
+    ASSERT_EQ(tokens.size(), 2u);
+    EXPECT_EQ(tokens[0].type, Token::TK_ID);
+    EXPECT_EQ(tokens[0].id, "charset");
+}
+
+// --- 浮動小数点リテラル ---
+
+TEST(LexerTest, LexFloatLiteral) {
+    Lexer lexer;
+    auto tokens = lexer.lex("3.14");
+    ASSERT_EQ(tokens.size(), 2u);
+    EXPECT_EQ(tokens[0].type, Token::TK_FLOAT);
+    EXPECT_DOUBLE_EQ(tokens[0].float_val, 3.14);
+}
+
+TEST(LexerTest, LexFloatLiteralWhole) {
+    Lexer lexer;
+    auto tokens = lexer.lex("1.0");
+    ASSERT_EQ(tokens.size(), 2u);
+    EXPECT_EQ(tokens[0].type, Token::TK_FLOAT);
+    EXPECT_DOUBLE_EQ(tokens[0].float_val, 1.0);
+}
+
+TEST(LexerTest, IntegerNotLexedAsFloat) {
+    // 小数点なし整数は TK_INT になる
+    Lexer lexer;
+    auto tokens = lexer.lex("42");
+    ASSERT_EQ(tokens.size(), 2u);
+    EXPECT_EQ(tokens[0].type, Token::TK_INT);
+}

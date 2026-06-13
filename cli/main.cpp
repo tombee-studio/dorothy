@@ -222,6 +222,9 @@ int main(int argc, char **argv) {
                     ctx.defined_funcs.insert(func->getName());
             }
             for (auto func : program) {
+                func->llvm_pre_register(ctx);
+            }
+            for (auto func : program) {
                 func->llvm_emit(ctx);
             }
         }
@@ -242,6 +245,9 @@ int main(int argc, char **argv) {
         for (auto func : program) {
             if (!func->isImport())
                 ctx.defined_funcs.insert(func->getName());
+        }
+        for (auto func : program) {
+            func->llvm_pre_register(ctx);
         }
         for (auto func : program) {
             func->llvm_emit(ctx);

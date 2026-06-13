@@ -17,17 +17,17 @@ TEST(ParserTest, ParseSimpleFunction) {
 TEST(ParserTest, ParseFunctionWithOneArg) {
     Lexer lexer;
     Parser parser;
-    auto tokens = lexer.lex("func double(int a) { return a; }");
+    auto tokens = lexer.lex("func dbl(a: int) { return a; }");
     auto program = parser.parse(tokens);
     ASSERT_EQ(program.size(), 1u);
-    EXPECT_EQ(program[0]->getName(), "double");
+    EXPECT_EQ(program[0]->getName(), "dbl");
     EXPECT_FALSE(program[0]->isImport());
 }
 
 TEST(ParserTest, ParseFunctionWithMultipleArgs) {
     Lexer lexer;
     Parser parser;
-    auto tokens = lexer.lex("func add(int a, int b) { return a; }");
+    auto tokens = lexer.lex("func add(a: int, b: int) { return a; }");
     auto program = parser.parse(tokens);
     ASSERT_EQ(program.size(), 1u);
     EXPECT_EQ(program[0]->getName(), "add");
@@ -49,7 +49,7 @@ TEST(ParserTest, ParseFunctionCallInReturn) {
     Lexer lexer;
     Parser parser;
     auto tokens = lexer.lex(
-        "func test(int a) { return a; } "
+        "func test(a: int) { return a; } "
         "func main() { return test(3); }");
     auto program = parser.parse(tokens);
     ASSERT_EQ(program.size(), 2u);
@@ -61,7 +61,7 @@ TEST(ParserTest, ParseFibonacci) {
     Lexer lexer;
     Parser parser;
     auto tokens = lexer.lex(
-        "func fibonacci(int a) { "
+        "func fibonacci(a: int) { "
         "  if(a > 1) { return a + fibonacci(a - 1); } "
         "  else { return 1; } "
         "} "
@@ -77,7 +77,7 @@ TEST(ParserTest, ParseForLoop) {
     Parser parser;
     auto tokens = lexer.lex(
         "func main() { "
-        "  int i; "
+        "  var i: int; "
         "  for(i = 0; i < 5; i = i + 1) { } "
         "  return i; "
         "}");
@@ -91,8 +91,7 @@ TEST(ParserTest, ParseWhileLoop) {
     Parser parser;
     auto tokens = lexer.lex(
         "func main() { "
-        "  int i; "
-        "  i = 0; "
+        "  var i: int = 0; "
         "  while(i < 10) { i = i + 1; } "
         "  return i; "
         "}");
@@ -113,4 +112,105 @@ TEST(ParserTest, ParseImportFunction) {
     EXPECT_EQ(program[0]->getName(), "print");
     EXPECT_FALSE(program[1]->isImport());
     EXPECT_EQ(program[1]->getName(), "main");
+}
+
+// --- 変数型宣言 ---
+
+TEST(ParserTest, ParseCharVariableDecl) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex("func main() { var c: char; return 0; }");
+    auto program = parser.parse(tokens);
+    ASSERT_EQ(program.size(), 1u);
+    EXPECT_EQ(program[0]->getName(), "main");
+}
+
+TEST(ParserTest, ParseLongVariableDecl) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex("func main() { var l: long; return 0; }");
+    auto program = parser.parse(tokens);
+    ASSERT_EQ(program.size(), 1u);
+    EXPECT_EQ(program[0]->getName(), "main");
+}
+
+TEST(ParserTest, ParseFloatVariableDecl) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex("func main() { var f: float; return 0; }");
+    auto program = parser.parse(tokens);
+    ASSERT_EQ(program.size(), 1u);
+    EXPECT_EQ(program[0]->getName(), "main");
+}
+
+TEST(ParserTest, ParseDoubleVariableDecl) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex("func main() { var d: double; return 0; }");
+    auto program = parser.parse(tokens);
+    ASSERT_EQ(program.size(), 1u);
+    EXPECT_EQ(program[0]->getName(), "main");
+}
+
+TEST(ParserTest, ParseFloatLiteralAssignment) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex("func main() { var x: float = 3.14; return 0; }");
+    auto program = parser.parse(tokens);
+    ASSERT_EQ(program.size(), 1u);
+    EXPECT_EQ(program[0]->getName(), "main");
+}
+
+TEST(ParserTest, OldStyleDeclRejected) {
+    // 旧来の C スタイル変数宣言はパースエラーになる
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex("func main() { int x; return x; }");
+    EXPECT_THROW(parser.parse(tokens), ParseError);
+}
+
+TEST(ParserTest, ParseVarDecl) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex("func main() { var x: int = 0; return x; }");
+    auto program = parser.parse(tokens);
+    ASSERT_EQ(program.size(), 1u);
+    EXPECT_EQ(program[0]->getName(), "main");
+}
+
+TEST(ParserTest, ParseLetDecl) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex("func main() { let x: double = 0.0; return 0; }");
+    auto program = parser.parse(tokens);
+    ASSERT_EQ(program.size(), 1u);
+    EXPECT_EQ(program[0]->getName(), "main");
+}
+
+TEST(ParserTest, ParseVarNoInitializer) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex("func main() { var x: int; return 0; }");
+    auto program = parser.parse(tokens);
+    ASSERT_EQ(program.size(), 1u);
+}
+
+TEST(ParserTest, ParseLetRequiresInitializer) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex("func main() { let x: int; return 0; }");
+    EXPECT_THROW(parser.parse(tokens), ParseError);
+}
+
+TEST(ParserTest, ParseTypedFunctionArgs) {
+    Lexer lexer;
+    Parser parser;
+    // 全型を引数に持つ関数がパースできること
+    auto tokens = lexer.lex(
+        "func f(a: char, b: int, c: long) { return 0; } "
+        "func g(x: float, y: double) { return 0; }");
+    auto program = parser.parse(tokens);
+    ASSERT_EQ(program.size(), 2u);
+    EXPECT_EQ(program[0]->getName(), "f");
+    EXPECT_EQ(program[1]->getName(), "g");
 }

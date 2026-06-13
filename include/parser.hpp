@@ -23,15 +23,19 @@ class ParseError : public runtime_error {
 class Parser {
     int _pos;
     vector<Function *> _functions;
+    map<string, StructDefInfo> _struct_defs;
 
  public:
     vector<Function *> parse(vector<Token> &tokens);
+    const map<string, StructDefInfo>& getStructDefs() const { return _struct_defs; }
 
  private:
     Token consume(vector<Token> &, Token::Type);
 
     Function *parse_function(vector<Token> &);
+    void parse_struct_def(vector<Token> &);
     vector<DeclVar *> parse_declargs(vector<Token> &);
+    DeclVar *parse_declparam(vector<Token> &);
     DeclVar *parse_declvar(vector<Token> &);
     vector<Expression *> parse_array_initializer(vector<Token> &);
     Block *parse_block(vector<Token> &);
@@ -54,5 +58,6 @@ class Parser {
     Expression *parse_term(vector<Token> &);
     Expression *parse_integer(vector<Token> &);
     Expression *parse_call(vector<Token> &);
+    Expression *parse_struct_init(vector<Token> &);
     vector<Expression *> parse_arg(vector<Token> &);
 };
