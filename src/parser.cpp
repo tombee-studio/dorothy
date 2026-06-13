@@ -52,13 +52,22 @@ void Parser::parse_struct_def(vector<Token> &tokens) {
                 throw ParseError("expected field name", tokens[_pos]);
             if (consume(tokens, (Token::Type)':').type == Token::NONE)
                 throw ParseError("expected ':' in field declaration", tokens[_pos]);
-            if (!is_type_keyword(tokens[_pos].type))
-                throw ParseError("expected type keyword", tokens[_pos]);
-            VarType ftype = token_to_vartype(tokens[_pos].type);
-            _pos++;
-            if (consume(tokens, (Token::Type)';').type == Token::NONE)
-                throw ParseError("expected ';' after field declaration", tokens[_pos]);
-            sdef.fields.push_back({fname.id, ftype});
+            if (tokens[_pos].type == Token::TK_ID && _struct_defs.count(tokens[_pos].id)) {
+                string field_struct = tokens[_pos].id;
+                _pos++;
+                if (consume(tokens, (Token::Type)';').type == Token::NONE)
+                    throw ParseError("expected ';' after field declaration", tokens[_pos]);
+                sdef.fields.push_back({fname.id, VarType::STRUCT, field_struct});
+            } else if (is_type_keyword(tokens[_pos].type)) {
+                VarType ftype = token_to_vartype(tokens[_pos].type);
+                _pos++;
+                if (consume(tokens, (Token::Type)';').type == Token::NONE)
+                    throw ParseError("expected ';' after field declaration", tokens[_pos]);
+                sdef.fields.push_back({fname.id, ftype, ""});
+            } else {
+                throw ParseError("expected type keyword or struct name in field declaration",
+                                 tokens[_pos]);
+            }
         } else if (tokens[_pos].type == Token::KW_CONSTRUCTOR) {
             // constructor(params) { body }
             _pos++;

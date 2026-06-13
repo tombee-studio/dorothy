@@ -359,3 +359,129 @@ TEST(StructTest, StructVarWithoutInitThrows) {
         "func main() { var p: Point; return 0; }");
     EXPECT_THROW(parser.parse(tokens), ParseError);
 }
+
+// ===== ネスト構造体（正常系） =====
+
+// ネストフィールド定義をパースできる
+TEST(StructTest, ParseNestedStructField) {
+    Lexer lexer; Parser parser;
+    auto tokens = lexer.lex(
+        "struct Vec2 { var x: int; var y: int; } "
+        "struct Rect { var origin: Vec2; var w: int; } "
+        "func main() { return 0; }");
+    EXPECT_NO_THROW(parser.parse(tokens));
+}
+
+// ネストフィールドへの読み書き（IR レベル）
+TEST(StructTest, NestedFieldAccessEmitsLeafPath) {
+    auto ir = llvm_emit_ir(
+        "struct Vec2 { var x: int; var y: int; } "
+        "struct Rect { var origin: Vec2; var w: int; } "
+        "func main() {"
+        "  var r: Rect = Rect(0, 0, 10);"
+        "  r.origin.x = 3;"
+        "  return r.origin.x;"
+        "}");
+    // origin.x はリーフフィールドとして存在する
+    EXPECT_NE(ir.find("origin.x.addr"), std::string::npos);
+}
+
+// ネストフィールドを持つ構造体を引数として渡す
+TEST(StructTest, NestedStructParamExpanded) {
+    auto ir = llvm_emit_ir(
+        "struct Vec2 { var x: int; var y: int; } "
+        "struct Rect { var origin: Vec2; var w: int; } "
+        "func getW(r: Rect) { return r.w; } "
+        "func main() { var r: Rect = Rect(0, 0, 10); return getW(r); }");
+    // Rect{origin: Vec2{x,y}, w} = 3 leaf fields → i32 x3 params
+    EXPECT_NE(ir.find("define i64 @getW(i32 %param.0, i32 %param.1, i32 %param.2)"),
+              std::string::npos);
+}
+
+// ネストフィールドを持つ構造体を戻り値として返す
+TEST(StructTest, NestedStructReturn) {
+    auto ir = llvm_emit_ir(
+        "struct Vec2 { var x: int; var y: int; } "
+        "struct Rect { var origin: Vec2; var w: int; } "
+        "func makeRect() -> Rect {"
+        "  var r: Rect = Rect(1, 2, 10);"
+        "  return r;"
+        "} "
+        "func main() { var r: Rect = makeRect(); return r.w; }");
+    // Rect: 3 leaf fields → 3 sret ptrs
+    EXPECT_NE(ir.find("define void @makeRect(ptr %sret.0, ptr %sret.1, ptr %sret.2)"),
+              std::string::npos);
+}
+
+// コンストラクタでネストフィールドに代入
+TEST(StructTest, NestedFieldAssignInConstructorBytecode) {
+    EXPECT_EQ(run_program_for_struct(
+        "struct Vec2 { var x: int; var y: int; "
+        "  constructor(vx: int, vy: int) { this.x = vx; this.y = vy; } "
+        "} "
+        "struct Rect { var origin: Vec2; var w: int; "
+        "  constructor(ox: int, oy: int, sw: int) {"
+        "    this.origin.x = ox; this.origin.y = oy; this.w = sw; "
+        "  } "
+        "} "
+        "func main() {"
+        "  var r: Rect = Rect(1, 2, 10);"
+        "  return r.origin.x + r.w;"
+        "}"),
+        11);
+}
+
+// ネスト構造体を含む構造体の値コピー
+TEST(StructTest, NestedStructCopyBytecode) {
+    EXPECT_EQ(run_program_for_struct(
+        "struct Vec2 { var x: int; var y: int; "
+        "  constructor(vx: int, vy: int) { this.x = vx; this.y = vy; } "
+        "} "
+        "struct Rect { var origin: Vec2; var w: int; "
+        "  constructor(ox: int, oy: int, sw: int) {"
+        "    this.origin.x = ox; this.origin.y = oy; this.w = sw; "
+        "  } "
+        "} "
+        "func main() {"
+        "  var a: Rect = Rect(5, 6, 20);"
+        "  var b: Rect = a;"          // 値コピー
+        "  a.origin.x = 99;"          // a を変更
+        "  return b.origin.x + b.w;"  // b は独立: 5 + 20 = 25
+        "}"),
+        25);
+}
+
+// サブ構造体フィールドを独立した変数にコピー
+TEST(StructTest, CopyNestedSubfieldToVar) {
+    auto ir = llvm_emit_ir(
+        "struct Vec2 { var x: int; var y: int; } "
+        "struct Rect { var origin: Vec2; var w: int; } "
+        "func main() {"
+        "  var r: Rect = Rect(3, 4, 10);"
+        "  var o: Vec2 = r.origin;"   // サブフィールドのコピー
+        "  return o.x;"
+        "}");
+    EXPECT_NE(ir.find("copy.field"), std::string::npos);
+}
+
+// ===== ネスト構造体（異常系） =====
+
+// ネストフィールドの先に存在しないフィールドを指定するとエラー
+TEST(StructTest, NestedFieldNotFoundThrows) {
+    EXPECT_THROW(
+        llvm_emit_ir(
+            "struct Vec2 { var x: int; var y: int; } "
+            "struct Rect { var origin: Vec2; var w: int; } "
+            "func main() { var r: Rect = Rect(0, 0, 10); return r.origin.z; }"),
+        CompileError);
+}
+
+// プリミティブフィールドをさらにドットアクセスするとエラー
+TEST(StructTest, AccessLeafFieldAsMemberThrows) {
+    EXPECT_THROW(
+        llvm_emit_ir(
+            "struct Vec2 { var x: int; var y: int; } "
+            "struct Rect { var origin: Vec2; var w: int; } "
+            "func main() { var r: Rect = Rect(0, 0, 10); return r.w.x; }"),
+        CompileError);
+}

@@ -9,6 +9,83 @@ using std::vector;
 static std::vector<std::pair<string, string>>
 prepareCallArgs(LLVMGenCtx&, const string&, const vector<Expression*>&);
 
+static string resolve_struct_var(LLVMGenCtx&, const string&);
+
+// ===== Nested-struct helpers =====
+
+struct LeafField { string path; VarType type; };
+
+// Recursively enumerate all primitive leaf fields of a struct with dotted paths.
+static vector<LeafField> get_leaf_fields(const string& struct_name, const string& prefix = "") {
+    vector<LeafField> result;
+    const auto& sdef = g_struct_defs[struct_name];
+    for (auto& field : sdef.fields) {
+        string full = prefix.empty() ? field.name : prefix + "." + field.name;
+        if (field.type == VarType::STRUCT) {
+            for (auto& sub : get_leaf_fields(field.struct_name, full))
+                result.push_back(sub);
+        } else {
+            result.push_back({full, field.type});
+        }
+    }
+    return result;
+}
+
+// Resolve the VarType at a dotted path within a struct hierarchy.
+static VarType resolve_path_field_type(const string& struct_name, const string& path) {
+    size_t dot = path.find('.');
+    const auto& sdef = g_struct_defs[struct_name];
+    if (dot == string::npos) {
+        int idx = sdef.fieldIndex(path);
+        if (idx < 0) throw CompileError(("no field '" + path + "' in " + struct_name).c_str());
+        return sdef.fields[idx].type;
+    }
+    string head = path.substr(0, dot);
+    string tail = path.substr(dot + 1);
+    int idx = sdef.fieldIndex(head);
+    if (idx < 0) throw CompileError(("no field '" + head + "' in " + struct_name).c_str());
+    if (sdef.fields[idx].type != VarType::STRUCT)
+        throw CompileError(("field '" + head + "' is not a struct").c_str());
+    return resolve_path_field_type(sdef.fields[idx].struct_name, tail);
+}
+
+// Resolve the struct_name at a dotted path (for non-leaf struct fields).
+static string resolve_path_struct_name(const string& struct_name, const string& path) {
+    size_t dot = path.find('.');
+    const auto& sdef = g_struct_defs[struct_name];
+    string head = (dot == string::npos) ? path : path.substr(0, dot);
+    string tail = (dot == string::npos) ? "" : path.substr(dot + 1);
+    int idx = sdef.fieldIndex(head);
+    if (idx < 0) throw CompileError(("no field '" + head + "' in " + struct_name).c_str());
+    if (sdef.fields[idx].type != VarType::STRUCT)
+        throw CompileError(("field '" + head + "' is not a struct type").c_str());
+    if (tail.empty()) return sdef.fields[idx].struct_name;
+    return resolve_path_struct_name(sdef.fields[idx].struct_name, tail);
+}
+
+// Allocate all leaf allocas for a struct variable (recursive).
+static void alloc_struct_fields(LLVMGenCtx& ctx, const string& var_id,
+                                 const string& struct_name, const string& prefix) {
+    const auto& sdef = g_struct_defs[struct_name];
+    for (auto& field : sdef.fields) {
+        string full = prefix.empty() ? field.name : prefix + "." + field.name;
+        if (field.type == VarType::STRUCT) {
+            ctx.struct_subfield_types[var_id][full] = field.struct_name;
+            alloc_struct_fields(ctx, var_id, field.struct_name, full);
+        } else {
+            int n = ctx.counter++;
+            string tstr = llvm_type_str(field.type);
+            string ptr = "%" + var_id + "." + full + ".addr." + to_string(n);
+            ctx.out << "  " << ptr << " = alloca " << tstr << "\n";
+            if (is_float_type(field.type))
+                ctx.out << "  store " << tstr << " 0.0, ptr " << ptr << "\n";
+            else
+                ctx.out << "  store " << tstr << " 0, ptr " << ptr << "\n";
+            ctx.struct_field_ptrs[var_id][full] = ptr;
+        }
+    }
+}
+
 // Convert a value in canonical form to the declared target LLVM type.
 static string llvm_coerce(LLVMGenCtx& ctx, const string& val,
                           VarType from_canonical, VarType to_declared) {
@@ -87,24 +164,11 @@ string Expression::llvm_lval(LLVMGenCtx& ctx) {
 
 void DeclVar::llvm_emit(LLVMGenCtx& ctx) {
     if (_type == VarType::STRUCT) {
-        auto it = g_struct_defs.find(_struct_name);
-        if (it == g_struct_defs.end())
+        if (!g_struct_defs.count(_struct_name))
             throw CompileError(("undefined struct type: " + _struct_name).c_str());
-        const auto& sdef = it->second;
         ctx.struct_var_types[_id] = _struct_name;
         if (_is_const) ctx.const_vars.insert(_id);
-        for (auto& field : sdef.fields) {
-            int n = ctx.counter++;
-            string tstr = llvm_type_str(field.type);
-            string ptr = "%" + _id + "." + field.name + ".addr." + to_string(n);
-            ctx.out << "  " << ptr << " = alloca " << tstr << "\n";
-            if (is_float_type(field.type)) {
-                ctx.out << "  store " << tstr << " 0.0, ptr " << ptr << "\n";
-            } else {
-                ctx.out << "  store " << tstr << " 0, ptr " << ptr << "\n";
-            }
-            ctx.struct_field_ptrs[_id][field.name] = ptr;
-        }
+        alloc_struct_fields(ctx, _id, _struct_name, "");
         return;
     }
     int n = ctx.counter++;
@@ -127,14 +191,13 @@ void InitializedDeclVar::llvm_emit(LLVMGenCtx& ctx) {
     DeclVar::llvm_emit(ctx);  // alloca + zero-init + type/const tracking
 
     if (_type == VarType::STRUCT) {
-        // struct-returning function call: call void @func(ptr %field0, ptr %field1, ...)
+        // struct-returning function call: call void @func(ptr %sret..., args...)
         auto cfe = dynamic_cast<CallFuncExp*>(_init);
         if (cfe && ctx.func_return_struct.count(cfe->getId())) {
-            const auto& sdef = g_struct_defs[_struct_name];
             bool is_imported = ctx.defined_funcs.find(cfe->getId()) == ctx.defined_funcs.end();
             vector<pair<string, string>> all_args;
-            for (auto& field : sdef.fields)
-                all_args.push_back({"ptr", ctx.struct_field_ptrs[_id][field.name]});
+            for (auto& leaf : get_leaf_fields(_struct_name))
+                all_args.push_back({"ptr", ctx.struct_field_ptrs[_id][leaf.path]});
             for (auto& p : prepareCallArgs(ctx, cfe->getId(), cfe->getArgs()))
                 all_args.push_back(p);
             ctx.out << "  call void ";
@@ -148,6 +211,29 @@ void InitializedDeclVar::llvm_emit(LLVMGenCtx& ctx) {
             return;
         }
 
+        // copy from nested struct sub-field: var copy: Inner = outer.a;
+        auto ma_src = dynamic_cast<MemberAccess*>(_init);
+        if (ma_src) {
+            string root_var = resolve_struct_var(ctx, ma_src->getVarName());
+            string src_path = ma_src->getFieldPath();
+            if (!root_var.empty() && ctx.struct_subfield_types.count(root_var) &&
+                ctx.struct_subfield_types[root_var].count(src_path)) {
+                const string& src_struct = ctx.struct_subfield_types[root_var][src_path];
+                if (src_struct != _struct_name)
+                    throw CompileError(("cannot copy struct '" + src_struct +
+                                        "' into variable of type '" + _struct_name + "'").c_str());
+                for (auto& leaf : get_leaf_fields(_struct_name)) {
+                    string tstr = llvm_type_str(leaf.type);
+                    string src_ptr = ctx.struct_field_ptrs[root_var][src_path + "." + leaf.path];
+                    string dst_ptr = ctx.struct_field_ptrs[_id][leaf.path];
+                    string val = ctx.fresh("copy.field");
+                    ctx.out << "  " << val << " = load " << tstr << ", ptr " << src_ptr << "\n";
+                    ctx.out << "  store " << tstr << " " << val << ", ptr " << dst_ptr << "\n";
+                }
+                return;
+            }
+        }
+
         // struct-to-struct copy: var a: P = b;
         const string& raw_src = _init->getVarName();
         string src_var = (raw_src == "$this" && !ctx.this_var.empty()) ? ctx.this_var : raw_src;
@@ -156,11 +242,10 @@ void InitializedDeclVar::llvm_emit(LLVMGenCtx& ctx) {
             if (src_struct != _struct_name)
                 throw CompileError(("cannot copy struct '" + src_struct +
                                     "' into variable of type '" + _struct_name + "'").c_str());
-            const auto& sdef = g_struct_defs[_struct_name];
-            for (auto& field : sdef.fields) {
-                string tstr = llvm_type_str(field.type);
-                string src_ptr = ctx.struct_field_ptrs[src_var][field.name];
-                string dst_ptr = ctx.struct_field_ptrs[_id][field.name];
+            for (auto& leaf : get_leaf_fields(_struct_name)) {
+                string tstr = llvm_type_str(leaf.type);
+                string src_ptr = ctx.struct_field_ptrs[src_var][leaf.path];
+                string dst_ptr = ctx.struct_field_ptrs[_id][leaf.path];
                 string val = ctx.fresh("copy.field");
                 ctx.out << "  " << val << " = load " << tstr << ", ptr " << src_ptr << "\n";
                 ctx.out << "  store " << tstr << " " << val << ", ptr " << dst_ptr << "\n";
@@ -390,11 +475,10 @@ void ReturnSt::llvm_emit(LLVMGenCtx& ctx) {
         if (var_struct != ctx.current_ret_struct)
             throw CompileError(("cannot return struct '" + var_struct +
                                 "' from function expecting '" + ctx.current_ret_struct + "'").c_str());
-        const auto& sdef = g_struct_defs[ctx.current_ret_struct];
-        for (int fi = 0; fi < (int)sdef.fields.size(); fi++) {
-            const auto& field = sdef.fields[fi];
-            string tstr = llvm_type_str(field.type);
-            string ptr = ctx.struct_field_ptrs[varname][field.name];
+        auto leaves = get_leaf_fields(ctx.current_ret_struct);
+        for (int fi = 0; fi < (int)leaves.size(); fi++) {
+            string tstr = llvm_type_str(leaves[fi].type);
+            string ptr = ctx.struct_field_ptrs[varname][leaves[fi].path];
             string val = ctx.fresh("ret.field");
             ctx.out << "  " << val << " = load " << tstr << ", ptr " << ptr << "\n";
             ctx.out << "  store " << tstr << " " << val
@@ -439,10 +523,9 @@ prepareCallArgs(LLVMGenCtx& ctx, const std::string& id,
             const string& varname = args[i]->getVarName();
             if (varname.empty() || !ctx.struct_var_types.count(varname))
                 throw CompileError("expected struct variable for struct parameter");
-            const auto& sdef = g_struct_defs[struct_name];
-            for (auto& field : sdef.fields) {
-                string tstr = llvm_type_str(field.type);
-                string ptr = ctx.struct_field_ptrs[varname][field.name];
+            for (auto& leaf : get_leaf_fields(struct_name)) {
+                string tstr = llvm_type_str(leaf.type);
+                string ptr = ctx.struct_field_ptrs[varname][leaf.path];
                 string val = ctx.fresh("arg.field");
                 ctx.out << "  " << val << " = load " << tstr << ", ptr " << ptr << "\n";
                 result.push_back({tstr, val});
@@ -497,8 +580,8 @@ void Function::llvm_pre_register(LLVMGenCtx& ctx) {
     for (auto* arg : _args) {
         pinfo.push_back({arg->getType(), arg->getStructName()});
         if (arg->getType() == VarType::STRUCT) {
-            const auto& sdef = g_struct_defs[arg->getStructName()];
-            for (auto& f : sdef.fields) flat_types.push_back(f.type);
+            for (auto& leaf : get_leaf_fields(arg->getStructName()))
+                flat_types.push_back(leaf.type);
         } else {
             flat_types.push_back(arg->getType());
         }
@@ -513,6 +596,7 @@ void Function::llvm_emit(LLVMGenCtx& ctx) {
     ctx.const_vars.clear();
     ctx.struct_field_ptrs.clear();
     ctx.struct_var_types.clear();
+    ctx.struct_subfield_types.clear();
     ctx.this_var.clear();
     ctx.sret_field_ptrs.clear();
     ctx.current_ret_struct = _ret_struct_name;
@@ -531,8 +615,8 @@ void Function::llvm_emit(LLVMGenCtx& ctx) {
     vector<pair<string, string>> llvm_params;
 
     if (returns_struct) {
-        const auto& sdef = g_struct_defs[_ret_struct_name];
-        for (int fi = 0; fi < (int)sdef.fields.size(); fi++) {
+        auto ret_leaves = get_leaf_fields(_ret_struct_name);
+        for (int fi = 0; fi < (int)ret_leaves.size(); fi++) {
             string reg = "%sret." + to_string(fi);
             llvm_params.push_back({"ptr", reg});
             ctx.sret_field_ptrs.push_back(reg);
@@ -542,9 +626,8 @@ void Function::llvm_emit(LLVMGenCtx& ctx) {
     int flat_idx = 0;
     for (auto* arg : _args) {
         if (arg->getType() == VarType::STRUCT) {
-            const auto& sdef = g_struct_defs[arg->getStructName()];
-            for (auto& field : sdef.fields)
-                llvm_params.push_back({llvm_type_str(field.type),
+            for (auto& leaf : get_leaf_fields(arg->getStructName()))
+                llvm_params.push_back({llvm_type_str(leaf.type),
                                        "%param." + to_string(flat_idx++)});
         } else {
             llvm_params.push_back({llvm_type_str(arg->getType()),
@@ -565,17 +648,16 @@ void Function::llvm_emit(LLVMGenCtx& ctx) {
         if (arg->getType() == VarType::STRUCT) {
             const string& sname = arg->getStructName();
             const string& pname = arg->getId();
-            const auto& sdef = g_struct_defs[sname];
             ctx.struct_var_types[pname] = sname;
             if (arg->isConst()) ctx.const_vars.insert(pname);
-            for (auto& field : sdef.fields) {
-                int n = ctx.counter++;
-                string tstr = llvm_type_str(field.type);
-                string ptr = "%" + pname + "." + field.name + ".addr." + to_string(n);
+            // Allocate all leaf fields (recursive) and populate subfield types
+            alloc_struct_fields(ctx, pname, sname, "");
+            // Overwrite zero-initialized values with parameter values
+            for (auto& leaf : get_leaf_fields(sname)) {
+                string tstr = llvm_type_str(leaf.type);
+                string ptr = ctx.struct_field_ptrs[pname][leaf.path];
                 string flat_reg = "%param." + to_string(flat_idx++);
-                ctx.out << "  " << ptr << " = alloca " << tstr << "\n";
                 ctx.out << "  store " << tstr << " " << flat_reg << ", ptr " << ptr << "\n";
-                ctx.struct_field_ptrs[pname][field.name] = ptr;
             }
         } else {
             arg->llvm_param(ctx, "%param." + to_string(flat_idx++));
@@ -710,41 +792,44 @@ static string resolve_struct_var(LLVMGenCtx& ctx, const string& varname) {
 }
 
 static VarType member_field_type(LLVMGenCtx& ctx, const string& varname,
-                                  const string& member) {
+                                  const string& path) {
     string resolved = resolve_struct_var(ctx, varname);
     auto sit = ctx.struct_var_types.find(resolved);
     if (sit == ctx.struct_var_types.end())
         throw CompileError(("not a struct variable: " + resolved).c_str());
-    const auto& sdef = g_struct_defs[sit->second];
-    int fidx = sdef.fieldIndex(member);
-    if (fidx < 0)
-        throw CompileError(("no field '" + member + "' in " + sit->second).c_str());
-    return sdef.fields[fidx].type;
+    return resolve_path_field_type(sit->second, path);
 }
 
 string MemberAccess::llvm_rval(LLVMGenCtx& ctx) {
     string varname = resolve_struct_var(ctx, _object->getVarName());
-    string ptr = ctx.struct_field_ptrs[varname][_member];
-    VarType ftype = member_field_type(ctx, varname, _member);
+    string path = getFieldPath();
+    string ptr = ctx.struct_field_ptrs[varname][path];
+    if (ptr.empty())
+        throw CompileError(("struct field '" + path + "' is a struct type and cannot be used as a primitive value").c_str());
+    VarType ftype = member_field_type(ctx, varname, path);
     string tstr = llvm_type_str(ftype);
-    string reg = ctx.fresh(varname + "_" + _member);
+    string reg = ctx.fresh(varname + "_" + path);
     ctx.out << "  " << reg << " = load " << tstr << ", ptr " << ptr << "\n";
     return llvm_to_canonical(ctx, reg, ftype);
 }
 
 string MemberAccess::llvm_lval(LLVMGenCtx& ctx) {
     string varname = resolve_struct_var(ctx, _object->getVarName());
-    return ctx.struct_field_ptrs[varname][_member];
+    string path = getFieldPath();
+    string ptr = ctx.struct_field_ptrs[varname][path];
+    if (ptr.empty())
+        throw CompileError(("struct field '" + path + "' is a struct type; assign field-by-field").c_str());
+    return ptr;
 }
 
 VarType MemberAccess::llvm_etype(LLVMGenCtx& ctx) const {
     string varname = resolve_struct_var(ctx, _object->getVarName());
-    return canonical_type(member_field_type(ctx, varname, _member));
+    return canonical_type(member_field_type(ctx, varname, getFieldPath()));
 }
 
 VarType MemberAccess::llvm_declared_type(LLVMGenCtx& ctx) const {
     string varname = resolve_struct_var(ctx, _object->getVarName());
-    return member_field_type(ctx, varname, _member);
+    return member_field_type(ctx, varname, getFieldPath());
 }
 
 // ===== ThisExpr =====

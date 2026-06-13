@@ -31,6 +31,7 @@ class Statement;
 struct FieldInfo {
     string name;
     VarType type;
+    string struct_name;  // non-empty when type == STRUCT
 };
 
 struct ConstructorInfo {
@@ -662,6 +663,16 @@ class MemberAccess : public Expression {
  public:
     MemberAccess(Expression *object, string member)
         : _object(object), _member(member) {}
+
+    Expression *getObject() const { return _object; }
+    const string &getMember() const { return _member; }
+
+    // Returns the full dotted path from the root variable, e.g. "a.x" for outer.a.x
+    string getFieldPath() const {
+        auto ma = dynamic_cast<const MemberAccess *>(_object);
+        if (ma) return ma->getFieldPath() + "." + _member;
+        return _member;
+    }
 
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &, int);
