@@ -126,7 +126,24 @@ Function *Parser::parse_function(vector<Token> &tokens) {
     auto declargs = parse_declargs(tokens);
     VarType ret_type = VarType::LONG;
     string ret_struct_name = "";
-    if (consume(tokens, Token::TK_ARROW).type != Token::NONE) {
+    bool has_explicit_ret_type = false;
+    if (consume(tokens, (Token::Type)':').type != Token::NONE) {
+        // func name(): type {}
+        has_explicit_ret_type = true;
+        if (is_type_keyword(tokens[_pos].type)) {
+            ret_type = token_to_vartype(tokens[_pos].type);
+            _pos++;
+        } else if (tokens[_pos].type == Token::TK_ID && _struct_defs.count(tokens[_pos].id)) {
+            ret_type = VarType::STRUCT;
+            ret_struct_name = tokens[_pos].id;
+            _pos++;
+        } else {
+            throw ParseError("expected type keyword after ':' in function return type",
+                             tokens[_pos]);
+        }
+    } else if (consume(tokens, Token::TK_ARROW).type != Token::NONE) {
+        // func name() -> StructName {} (legacy struct return syntax)
+        has_explicit_ret_type = true;
         Token struct_tok = consume(tokens, Token::TK_ID);
         if (struct_tok.type == Token::NONE)
             throw ParseError("expected struct name after '->'", tokens[_pos]);
@@ -136,7 +153,8 @@ Function *Parser::parse_function(vector<Token> &tokens) {
         ret_struct_name = struct_tok.id;
     }
     auto block = parse_block(tokens);
-    return new Function(id_token.id, declargs, block, ret_type, ret_struct_name);
+    return new Function(id_token.id, declargs, block, ret_type, ret_struct_name,
+                        has_explicit_ret_type);
 }
 
 vector<DeclVar *> Parser::parse_declargs(vector<Token> &tokens) {

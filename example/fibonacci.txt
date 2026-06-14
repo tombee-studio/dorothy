@@ -1,6 +1,6 @@
 import "stdio.h";
 
-func fib(n: int) {
+func fib(n: int): int {
     if (n == 1) {
         return 1;
     }

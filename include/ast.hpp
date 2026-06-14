@@ -143,12 +143,15 @@ class Function : public Node {
     Statement *_body;
     VarType _ret_type;
     string _ret_struct_name;
+    bool _has_explicit_ret_type;
 
  public:
     Function(string id, vector<DeclVar *> args, Statement *body,
-             VarType ret_type = VarType::LONG, string ret_struct_name = "")
+             VarType ret_type = VarType::LONG, string ret_struct_name = "",
+             bool has_explicit_ret_type = false)
         : _id(id), _args(args), _body(body),
-          _ret_type(ret_type), _ret_struct_name(ret_struct_name) {}
+          _ret_type(ret_type), _ret_struct_name(ret_struct_name),
+          _has_explicit_ret_type(has_explicit_ret_type) {}
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                          int);
@@ -157,6 +160,8 @@ class Function : public Node {
     const string &getName() const { return _id; }
     VarType getRetType() const { return _ret_type; }
     const string &getRetStructName() const { return _ret_struct_name; }
+    bool hasExplicitRetType() const { return _has_explicit_ret_type; }
+    Statement *getBody() const { return _body; }
     virtual bool isImport() const { return false; }
 };
 
@@ -199,6 +204,8 @@ class DeclVarSt : public Statement {
  public:
     explicit DeclVarSt(DeclVar *decl) : _decl(decl) {}
 
+    DeclVar *getDecl() const { return _decl; }
+
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                          int);
@@ -213,6 +220,8 @@ class IfSt : public Statement {
  public:
     IfSt(Expression *cond, Statement *truest, Statement *falsest)
         : _cond(cond), _truest(truest), _falsest(falsest) {}
+    Statement *getTrueSt() const { return _truest; }
+    Statement *getFalseSt() const { return _falsest; }
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                          int);
@@ -225,6 +234,7 @@ class WhileSt : public Statement {
 
  public:
     WhileSt(Expression *cond, Statement *body) : _cond(cond), _body(body) {}
+    Statement *getBody() const { return _body; }
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                          int);
@@ -241,6 +251,7 @@ class ForSt : public Statement {
     ForSt(Expression *init, Expression *cond, Expression *proceed,
           Statement *body)
         : _init(init), _cond(cond), _proceed(proceed), _body(body) {}
+    Statement *getBody() const { return _body; }
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                          int);
@@ -264,6 +275,7 @@ class ReturnSt : public Statement {
 
  public:
     explicit ReturnSt(Expression *exp) : _exp(exp) {}
+    Expression *getExpr() const { return _exp; }
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                          int);
@@ -275,6 +287,8 @@ class Block : public Statement {
 
  public:
     explicit Block(vector<Statement *> statements) : _statements(statements) {}
+
+    const vector<Statement *> &getStatements() const { return _statements; }
 
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
@@ -299,6 +313,13 @@ class Expression : public Node {
     virtual VarType compile_type(map<string, int> &) const { return VarType::LONG; }
     // Returns the variable name if this is a simple variable reference, else ""
     virtual const string& getVarName() const { static string empty; return empty; }
+    // Returns the static (compile-time) type of this expression for type checking.
+    // var_types: variable name -> declared type
+    // func_ret_types: function name -> declared return type
+    virtual VarType static_type(const map<string, VarType> & /*var_types*/,
+                                const map<string, VarType> & /*func_ret_types*/) const {
+        return VarType::LONG;
+    }
 };
 
 class ExpressionSt : public Statement {
@@ -342,17 +363,21 @@ class AddExp : public Expression {
  public:
     AddExp(Expression *left, Expression *right) : _left(left), _right(right) {}
 
-    virtual void print(ostream &, int tab);
-    virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
-                         int);
-    virtual void lcompile(vector<Code> &, map<string, int> &,
-                          map<string, int> &, int);
-    virtual string llvm_rval(LLVMGenCtx &);
-    virtual VarType llvm_etype(LLVMGenCtx &ctx) const {
+    void print(ostream &, int tab) override;
+    void compile(vector<Code> &, map<string, int> &, map<string, int> &,
+                 int) override;
+    void lcompile(vector<Code> &, map<string, int> &,
+                  map<string, int> &, int) override;
+    string llvm_rval(LLVMGenCtx &) override;
+    VarType llvm_etype(LLVMGenCtx &ctx) const override {
         return promote_canonical(_left->llvm_etype(ctx), _right->llvm_etype(ctx));
     }
-    virtual VarType compile_type(map<string, int> &vars) const {
+    VarType compile_type(map<string, int> &vars) const override {
         return promote_canonical(_left->compile_type(vars), _right->compile_type(vars));
+    }
+    VarType static_type(const map<string, VarType> &vt,
+                        const map<string, VarType> &frt) const override {
+        return promote_canonical(_left->static_type(vt, frt), _right->static_type(vt, frt));
     }
 };
 
@@ -363,17 +388,21 @@ class SubExp : public Expression {
  public:
     SubExp(Expression *left, Expression *right) : _left(left), _right(right) {}
 
-    virtual void print(ostream &, int tab);
-    virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
-                         int);
-    virtual void lcompile(vector<Code> &, map<string, int> &,
-                          map<string, int> &, int);
-    virtual string llvm_rval(LLVMGenCtx &);
-    virtual VarType llvm_etype(LLVMGenCtx &ctx) const {
+    void print(ostream &, int tab) override;
+    void compile(vector<Code> &, map<string, int> &, map<string, int> &,
+                 int) override;
+    void lcompile(vector<Code> &, map<string, int> &,
+                  map<string, int> &, int) override;
+    string llvm_rval(LLVMGenCtx &) override;
+    VarType llvm_etype(LLVMGenCtx &ctx) const override {
         return promote_canonical(_left->llvm_etype(ctx), _right->llvm_etype(ctx));
     }
-    virtual VarType compile_type(map<string, int> &vars) const {
+    VarType compile_type(map<string, int> &vars) const override {
         return promote_canonical(_left->compile_type(vars), _right->compile_type(vars));
+    }
+    VarType static_type(const map<string, VarType> &vt,
+                        const map<string, VarType> &frt) const override {
+        return promote_canonical(_left->static_type(vt, frt), _right->static_type(vt, frt));
     }
 };
 
@@ -384,17 +413,21 @@ class MulExp : public Expression {
  public:
     MulExp(Expression *left, Expression *right) : _left(left), _right(right) {}
 
-    virtual void print(ostream &, int tab);
-    virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
-                         int);
-    virtual void lcompile(vector<Code> &, map<string, int> &,
-                          map<string, int> &, int);
-    virtual string llvm_rval(LLVMGenCtx &);
-    virtual VarType llvm_etype(LLVMGenCtx &ctx) const {
+    void print(ostream &, int tab) override;
+    void compile(vector<Code> &, map<string, int> &, map<string, int> &,
+                 int) override;
+    void lcompile(vector<Code> &, map<string, int> &,
+                  map<string, int> &, int) override;
+    string llvm_rval(LLVMGenCtx &) override;
+    VarType llvm_etype(LLVMGenCtx &ctx) const override {
         return promote_canonical(_left->llvm_etype(ctx), _right->llvm_etype(ctx));
     }
-    virtual VarType compile_type(map<string, int> &vars) const {
+    VarType compile_type(map<string, int> &vars) const override {
         return promote_canonical(_left->compile_type(vars), _right->compile_type(vars));
+    }
+    VarType static_type(const map<string, VarType> &vt,
+                        const map<string, VarType> &frt) const override {
+        return promote_canonical(_left->static_type(vt, frt), _right->static_type(vt, frt));
     }
 };
 
@@ -405,17 +438,21 @@ class DivExp : public Expression {
  public:
     DivExp(Expression *left, Expression *right) : _left(left), _right(right) {}
 
-    virtual void print(ostream &, int tab);
-    virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
-                         int);
-    virtual void lcompile(vector<Code> &, map<string, int> &,
-                          map<string, int> &, int);
-    virtual string llvm_rval(LLVMGenCtx &);
-    virtual VarType llvm_etype(LLVMGenCtx &ctx) const {
+    void print(ostream &, int tab) override;
+    void compile(vector<Code> &, map<string, int> &, map<string, int> &,
+                 int) override;
+    void lcompile(vector<Code> &, map<string, int> &,
+                  map<string, int> &, int) override;
+    string llvm_rval(LLVMGenCtx &) override;
+    VarType llvm_etype(LLVMGenCtx &ctx) const override {
         return promote_canonical(_left->llvm_etype(ctx), _right->llvm_etype(ctx));
     }
-    virtual VarType compile_type(map<string, int> &vars) const {
+    VarType compile_type(map<string, int> &vars) const override {
         return promote_canonical(_left->compile_type(vars), _right->compile_type(vars));
+    }
+    VarType static_type(const map<string, VarType> &vt,
+                        const map<string, VarType> &frt) const override {
+        return promote_canonical(_left->static_type(vt, frt), _right->static_type(vt, frt));
     }
 };
 
@@ -426,17 +463,21 @@ class ModExp : public Expression {
  public:
     ModExp(Expression *left, Expression *right) : _left(left), _right(right) {}
 
-    virtual void print(ostream &, int tab);
-    virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
-                         int);
-    virtual void lcompile(vector<Code> &, map<string, int> &,
-                          map<string, int> &, int);
-    virtual string llvm_rval(LLVMGenCtx &);
-    virtual VarType llvm_etype(LLVMGenCtx &ctx) const {
+    void print(ostream &, int tab) override;
+    void compile(vector<Code> &, map<string, int> &, map<string, int> &,
+                 int) override;
+    void lcompile(vector<Code> &, map<string, int> &,
+                  map<string, int> &, int) override;
+    string llvm_rval(LLVMGenCtx &) override;
+    VarType llvm_etype(LLVMGenCtx &ctx) const override {
         return promote_canonical(_left->llvm_etype(ctx), _right->llvm_etype(ctx));
     }
-    virtual VarType compile_type(map<string, int> &vars) const {
+    VarType compile_type(map<string, int> &vars) const override {
         return promote_canonical(_left->compile_type(vars), _right->compile_type(vars));
+    }
+    VarType static_type(const map<string, VarType> &vt,
+                        const map<string, VarType> &frt) const override {
+        return promote_canonical(_left->static_type(vt, frt), _right->static_type(vt, frt));
     }
 };
 
@@ -552,14 +593,18 @@ class FloatExp : public Expression {
  public:
     explicit FloatExp(double float_val) : _float_val(float_val) {}
 
-    virtual void print(ostream &, int tab);
-    virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
-                         int);
-    virtual void lcompile(vector<Code> &, map<string, int> &,
-                          map<string, int> &, int);
-    virtual string llvm_rval(LLVMGenCtx &);
-    virtual VarType llvm_etype(LLVMGenCtx &) const { return VarType::DOUBLE; }
-    virtual VarType compile_type(map<string, int> &) const { return VarType::DOUBLE; }
+    void print(ostream &, int tab) override;
+    void compile(vector<Code> &, map<string, int> &, map<string, int> &,
+                 int) override;
+    void lcompile(vector<Code> &, map<string, int> &,
+                  map<string, int> &, int) override;
+    string llvm_rval(LLVMGenCtx &) override;
+    VarType llvm_etype(LLVMGenCtx &) const override { return VarType::DOUBLE; }
+    VarType compile_type(map<string, int> &) const override { return VarType::DOUBLE; }
+    VarType static_type(const map<string, VarType> &,
+                        const map<string, VarType> &) const override {
+        return VarType::DOUBLE;
+    }
 };
 
 class ArrayIndex : public Expression {
@@ -627,17 +672,22 @@ class Variable : public Expression {
  public:
     explicit Variable(string id) : _id(id) {}
 
-    virtual void print(ostream &, int tab);
-    virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
-                         int);
-    virtual void lcompile(vector<Code> &, map<string, int> &,
-                          map<string, int> &, int);
-    virtual string llvm_rval(LLVMGenCtx &);
-    virtual string llvm_lval(LLVMGenCtx &);
-    virtual VarType llvm_etype(LLVMGenCtx &) const;
-    virtual VarType llvm_declared_type(LLVMGenCtx &) const;
-    virtual VarType compile_type(map<string, int> &) const;
-    virtual const string& getVarName() const { return _id; }
+    void print(ostream &, int tab) override;
+    void compile(vector<Code> &, map<string, int> &, map<string, int> &,
+                 int) override;
+    void lcompile(vector<Code> &, map<string, int> &,
+                  map<string, int> &, int) override;
+    string llvm_rval(LLVMGenCtx &) override;
+    string llvm_lval(LLVMGenCtx &) override;
+    VarType llvm_etype(LLVMGenCtx &) const override;
+    VarType llvm_declared_type(LLVMGenCtx &) const override;
+    VarType compile_type(map<string, int> &) const override;
+    const string& getVarName() const override { return _id; }
+    VarType static_type(const map<string, VarType> &var_types,
+                        const map<string, VarType> &) const override {
+        auto it = var_types.find(_id);
+        return (it != var_types.end()) ? it->second : VarType::LONG;
+    }
 };
 
 class CallFuncExp : public Expression {
@@ -648,12 +698,17 @@ class CallFuncExp : public Expression {
     CallFuncExp(string id, vector<Expression *> args) : _id(id), _args(args) {}
     const string &getId() const { return _id; }
     const vector<Expression *> &getArgs() const { return _args; }
-    virtual void print(ostream &, int tab);
-    virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
-                         int);
-    virtual void lcompile(vector<Code> &, map<string, int> &,
-                          map<string, int> &, int);
-    virtual string llvm_rval(LLVMGenCtx &);
+    void print(ostream &, int tab) override;
+    void compile(vector<Code> &, map<string, int> &, map<string, int> &,
+                 int) override;
+    void lcompile(vector<Code> &, map<string, int> &,
+                  map<string, int> &, int) override;
+    string llvm_rval(LLVMGenCtx &) override;
+    VarType static_type(const map<string, VarType> &,
+                        const map<string, VarType> &func_ret_types) const override {
+        auto it = func_ret_types.find(_id);
+        return (it != func_ret_types.end()) ? it->second : VarType::LONG;
+    }
 };
 
 // ===== Struct expression nodes =====
