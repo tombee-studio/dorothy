@@ -1,0 +1,7 @@
+import "stdio.h";
+
+func main() {
+    var msg = "Hello, Dorothy!";
+    puts(msg);
+    return 0;
+}
