@@ -9,7 +9,28 @@
       "Bash(cat)",
       "Bash(timeout 5 ./dist/dorothy /tmp/test_interp.txt)",
       "Bash(echo \"exit: $?\")",
-      "Bash(make lib *)"
+      "Bash(make lib *)",
+      "Bash(dorothy --help)",
+      "Bash(mkdir -p /Users/tomoya/Documents/CppProjects/dorothy/example)",
+      "Bash(dorothy example/hello.txt)",
+      "Bash(dorothy example/fibonacci.txt)",
+      "Bash(dorothy example/primes.txt)",
+      "Bash(dorothy --emit-llvm example/hello.txt)",
+      "Bash(clang -o /tmp/hello /tmp/hello.ll)",
+      "Bash(/tmp/hello)",
+      "Bash(dorothy --emit-llvm example/fibonacci.txt)",
+      "Bash(clang -o /tmp/fib /tmp/fib.ll)",
+      "Bash(/tmp/fib)",
+      "Bash(dorothy --emit-llvm example/primes.txt)",
+      "Bash(clang -o /tmp/primes /tmp/primes.ll)",
+      "Bash(/tmp/primes)",
+      "Bash(make test *)",
+      "Bash(grep -v \"^$\")",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
+    ],
+    "additionalDirectories": [
+      "/Users/tomoya/Documents/CppProjects/dorothy"
     ]
   }
 }
