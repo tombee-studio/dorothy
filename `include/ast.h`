@@ -1,0 +1,113 @@
+#pragma once
+#include <string>
+#include <vector>
+#include <memory>
+#include <map>
+
+// Forward declarations
+struct ASTNode;
+struct TypeInfo;
+
+// Type system
+enum class BaseType {
+    INT,
+    CHAR,
+    LONG,
+    FLOAT,
+    DOUBLE,
+    VOID,
+    STRUCT,
+    POINTER
+};
+
+struct TypeInfo {
+    BaseType base;
+    std::string structName;  // for STRUCT type
+    int pointerDepth = 0;
+    bool isArray = false;
+    int arraySize = 0;
+
+    TypeInfo() : base(BaseType::INT), pointerDepth(0), isArray(false), arraySize(0) {}
+    TypeInfo(BaseType b) : base(b), pointerDepth(0), isArray(false), arraySize(0) {}
+    TypeInfo(const std::string& name) : base(BaseType::STRUCT), structName(name), pointerDepth(0), isArray(false), arraySize(0) {}
+
+    bool isVoid() const { return base == BaseType::VOID; }
+    bool isStruct() const { return base == BaseType::STRUCT; }
+    bool isPointer() const { return pointerDepth > 0; }
+};
+
+// AST Node types
+enum class NodeType {
+    PROGRAM,
+    FUNC_DEF,
+    STRUCT_DEF,
+    CONSTRUCTOR_DEF,
+    METHOD_DEF,
+    IMPORT,
+    BLOCK,
+    VAR_DECL,
+    ASSIGN,
+    IF,
+    WHILE,
+    FOR,
+    RETURN,
+    EXPR_STMT,
+    // Expressions
+    INT_LITERAL,
+    FLOAT_LITERAL,
+    STRING_LITERAL,
+    IDENT,
+    BINARY_OP,
+    UNARY_OP,
+    CALL,
+    METHOD_CALL,
+    MEMBER_ACCESS,
+    INDEX,
+    THIS,
+    STRUCT_INIT,
+};
+
+struct Param {
+    TypeInfo type;
+    std::string name;
+};
+
+struct ASTNode {
+    NodeType type;
+    
+    // Literals
+    int ival;
+    double fval;
+    std::string sval;
+    
+    // Type info
+    TypeInfo typeInfo;
+    TypeInfo returnType;
+    
+    // Operator
+    std::string op;
+    
+    // Children
+    std::vector<std::shared_ptr<ASTNode>> children;
+    
+    // Function/method params
+    std::vector<Param> params;
+    
+    // For struct definitions
+    std::vector<Param> members;
+    // methods stored in children with NodeType::METHOD_DEF or CONSTRUCTOR_DEF
+    
+    ASTNode() : ival(0), fval(0.0) {}
+};
+
+using ASTNodePtr = std::shared_ptr<ASTNode>;
+
+// Helper constructors
+ASTNodePtr makeNode(NodeType type);
+ASTNodePtr makeIntLiteral(int val);
+ASTNodePtr makeFloatLiteral(double val);
+ASTNodePtr makeStringLiteral(const std::string& val);
+ASTNodePtr makeIdent(const std::string& name);
+ASTNodePtr makeBinaryOp(const std::string& op, ASTNodePtr left, ASTNodePtr right);
+ASTNodePtr makeUnaryOp(const std::string& op, ASTNodePtr operand);
+ASTNodePtr makeThis();

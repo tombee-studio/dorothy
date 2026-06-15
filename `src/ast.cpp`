@@ -1,0 +1,52 @@
+#include "ast.h"
+
+ASTNodePtr makeNode(NodeType type) {
+    auto node = std::make_shared<ASTNode>();
+    node->type = type;
+    return node;
+}
+
+ASTNodePtr makeIntLiteral(int val) {
+    auto node = makeNode(NodeType::INT_LITERAL);
+    node->ival = val;
+    node->typeInfo = TypeInfo(BaseType::INT);
+    return node;
+}
+
+ASTNodePtr makeFloatLiteral(double val) {
+    auto node = makeNode(NodeType::FLOAT_LITERAL);
+    node->fval = val;
+    node->typeInfo = TypeInfo(BaseType::DOUBLE);
+    return node;
+}
+
+ASTNodePtr makeStringLiteral(const std::string& val) {
+    auto node = makeNode(NodeType::STRING_LITERAL);
+    node->sval = val;
+    return node;
+}
+
+ASTNodePtr makeIdent(const std::string& name) {
+    auto node = makeNode(NodeType::IDENT);
+    node->sval = name;
+    return node;
+}
+
+ASTNodePtr makeBinaryOp(const std::string& op, ASTNodePtr left, ASTNodePtr right) {
+    auto node = makeNode(NodeType::BINARY_OP);
+    node->op = op;
+    node->children.push_back(left);
+    node->children.push_back(right);
+    return node;
+}
+
+ASTNodePtr makeUnaryOp(const std::string& op, ASTNodePtr operand) {
+    auto node = makeNode(NodeType::UNARY_OP);
+    node->op = op;
+    node->children.push_back(operand);
+    return node;
+}
+
+ASTNodePtr makeThis() {
+    return makeNode(NodeType::THIS);
+}

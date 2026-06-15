@@ -1,0 +1,82 @@
+#pragma once
+#include <string>
+#include <vector>
+#include <map>
+
+enum TokenType {
+    TOKEN_INT_LITERAL,
+    TOKEN_FLOAT_LITERAL,
+    TOKEN_STRING_LITERAL,
+    TOKEN_IDENT,
+    TOKEN_PLUS,
+    TOKEN_MINUS,
+    TOKEN_STAR,
+    TOKEN_SLASH,
+    TOKEN_PERCENT,
+    TOKEN_EQ,
+    TOKEN_NEQ,
+    TOKEN_LT,
+    TOKEN_LE,
+    TOKEN_GT,
+    TOKEN_GE,
+    TOKEN_ASSIGN,
+    TOKEN_PLUS_ASSIGN,
+    TOKEN_MINUS_ASSIGN,
+    TOKEN_STAR_ASSIGN,
+    TOKEN_SLASH_ASSIGN,
+    TOKEN_LPAREN,
+    TOKEN_RPAREN,
+    TOKEN_LBRACE,
+    TOKEN_RBRACE,
+    TOKEN_LBRACKET,
+    TOKEN_RBRACKET,
+    TOKEN_SEMICOLON,
+    TOKEN_COLON,
+    TOKEN_COMMA,
+    TOKEN_DOT,
+    TOKEN_AMP,
+    TOKEN_ARROW,
+    TOKEN_IF,
+    TOKEN_ELSE,
+    TOKEN_WHILE,
+    TOKEN_FOR,
+    TOKEN_RETURN,
+    TOKEN_FUNC,
+    TOKEN_IMPORT,
+    TOKEN_VAR,
+    TOKEN_STRUCT,
+    TOKEN_CONSTRUCTOR,
+    TOKEN_THIS,
+    TOKEN_VOID,
+    TOKEN_INT_TYPE,
+    TOKEN_CHAR_TYPE,
+    TOKEN_LONG_TYPE,
+    TOKEN_FLOAT_TYPE,
+    TOKEN_DOUBLE_TYPE,
+    TOKEN_EOF
+};
+
+struct Token {
+    TokenType type;
+    std::string value;
+    int line;
+};
+
+class Lexer {
+public:
+    Lexer(const std::string& source);
+    std::vector<Token> tokenize();
+
+private:
+    std::string source;
+    int pos;
+    int line;
+
+    char current();
+    char peek(int offset = 1);
+    void advance();
+    void skipWhitespaceAndComments();
+    Token readNumber();
+    Token readString();
+    Token readIdentOrKeyword();
+};

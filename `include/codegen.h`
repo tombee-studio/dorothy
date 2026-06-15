@@ -1,0 +1,73 @@
+#pragma once
+#include "ast.h"
+#include "vm.h"
+#include <map>
+#include <string>
+#include <vector>
+#include <stdexcept>
+
+class CodeGen {
+public:
+    CodeGen();
+
+    // Generate VM code from AST
+    void generate(ASTNodePtr program);
+
+    // Get the VM (after generation)
+    VM& getVM();
+
+private:
+    VM vm;
+
+    // Current function being compiled
+    std::string currentFunc;
+    std::vector<Instruction>* currentInstructions;
+
+    // Struct type definitions (AST level)
+    std::map<std::string, ASTNodePtr> structDefs;
+
+    // Variable tracking: name -> type
+    struct VarInfo {
+        TypeInfo type;
+        bool isLocal;
+    };
+    std::map<std::string, VarInfo> localVars;
+
+    // Current struct being compiled (for methods)
+    std::string currentStructName;
+
+    void emit(const Instruction& instr);
+
+    // Top-level
+    void genProgram(ASTNodePtr node);
+    void genFuncDef(ASTNodePtr node);
+    void genStructDef(ASTNodePtr node);
+    void genImport(ASTNodePtr node);
+
+    // Struct method/constructor
+    void genConstructorDef(ASTNodePtr node, const std::string& structName);
+    void genMethodDef(ASTNodePtr node, const std::string& structName);
+
+    // Statements
+    void genBlock(ASTNodePtr node);
+    void genStatement(ASTNodePtr node);
+    void genVarDecl(ASTNodePtr node);
+    void genAssign(ASTNodePtr node);
+    void genIf(ASTNodePtr node);
+    void genWhile(ASTNodePtr node);
+    void genFor(ASTNodePtr node);
+    void genReturn(ASTNodePtr node);
+
+    // Expressions
+    void genExpr(ASTNodePtr node);
+    void genBinaryOp(ASTNodePtr node);
+    void genCall(ASTNodePtr node);
+    void genMethodCall(ASTNodePtr node);
+    void genMemberAccess(ASTNodePtr node);
+    void genStructInit(ASTNodePtr node);
+    void genAssignTarget(ASTNodePtr node); // generates store for lvalue
+
+    // Helpers
+    std::string mangleMethodName(const std::string& structName, const std::string& methodName);
+    std::string mangleConstructorName(const std::string& structName);
+};

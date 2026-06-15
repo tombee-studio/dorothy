@@ -1,0 +1,169 @@
+#pragma once
+#include "ast.h"
+#include <vector>
+#include <map>
+#include <string>
+#include <functional>
+#include <stdexcept>
+
+// Bytecode instructions
+enum class OpCode {
+    PUSH_INT,
+    PUSH_FLOAT,
+    PUSH_STRING,
+    LOAD,
+    STORE,
+    LOAD_MEMBER,
+    STORE_MEMBER,
+    LOAD_INDEX,
+    STORE_INDEX,
+    ADD,
+    SUB,
+    MUL,
+    DIV,
+    MOD,
+    NEG,
+    EQ,
+    NEQ,
+    LT,
+    LE,
+    GT,
+    GE,
+    AND,
+    OR,
+    NOT,
+    JMP,
+    JMP_IF_FALSE,
+    CALL,
+    CALL_METHOD,
+    CALL_BUILTIN,
+    RETURN,
+    RETURN_VOID,
+    NEW_STRUCT,
+    PUSH_THIS,
+    POP,
+    DUP,
+    ADDR_OF,
+    DEREF,
+    STORE_DEREF,
+    LOAD_ARRAY,
+    STORE_ARRAY,
+    HALT
+};
+
+struct Instruction {
+    OpCode op;
+    int iarg;
+    double farg;
+    std::string sarg;
+    Instruction(OpCode op) : op(op), iarg(0), farg(0.0) {}
+    Instruction(OpCode op, int arg) : op(op), iarg(arg), farg(0.0) {}
+    Instruction(OpCode op, double arg) : op(op), iarg(0), farg(arg) {}
+    Instruction(OpCode op, const std::string& arg) : op(op), iarg(0), farg(0.0), sarg(arg) {}
+    Instruction(OpCode op, int iarg, const std::string& sarg) : op(op), iarg(iarg), farg(0.0), sarg(sarg) {}
+};
+
+// Runtime value
+enum class ValueType {
+    INT,
+    FLOAT,
+    STRING,
+    STRUCT_INSTANCE,
+    ARRAY,
+    POINTER,
+    VOID_VAL
+};
+
+struct StructInstance;
+
+struct Value {
+    ValueType vtype;
+    int ival;
+    double fval;
+    std::string sval;
+    std::shared_ptr<StructInstance> structVal;
+    std::vector<Value> arrayVal;
+    int ptrVal; // index into memory or variable index
+
+    Value() : vtype(ValueType::INT), ival(0), fval(0.0), ptrVal(0) {}
+    Value(int v) : vtype(ValueType::INT), ival(v), fval(0.0), ptrVal(0) {}
+    Value(double v) : vtype(ValueType::FLOAT), ival(0), fval(v), ptrVal(0) {}
+    Value(const std::string& s) : vtype(ValueType::STRING), ival(0), fval(0.0), sval(s), ptrVal(0) {}
+
+    static Value makeVoid() {
+        Value v;
+        v.vtype = ValueType::VOID_VAL;
+        return v;
+    }
+};
+
+struct StructInstance {
+    std::string typeName;
+    std::map<std::string, Value> fields;
+    std::map<std::string, int> fieldOrder; // field name -> index for ordered access
+};
+
+// Struct type definition (for the VM)
+struct StructTypeDef {
+    std::string name;
+    std::vector<std::string> fieldNames;
+    std::map<std::string, TypeInfo> fieldTypes;
+    // constructor and methods: stored as function names in the VM function table
+    std::string constructorName; // mangled name, e.g. "Test::constructor"
+    std::map<std::string, std::string> methodNames; // method name -> mangled name
+};
+
+// Function definition for VM
+struct VMFunc {
+    std::string name;
+    std::vector<std::string> paramNames;
+    int numParams;
+    bool hasThis; // is it a method?
+    std::vector<Instruction> instructions;
+};
+
+class VM {
+public:
+    VM();
+
+    void addFunction(const VMFunc& func);
+    void addStructType(const StructTypeDef& def);
+    void addBuiltin(const std::string& name, std::function<Value(std::vector<Value>)> fn);
+
+    int run(const std::string& entryPoint = "main");
+
+private:
+    std::map<std::string, VMFunc> functions;
+    std::map<std::string, StructTypeDef> structTypes;
+    std::map<std::string, std::function<Value(std::vector<Value>)>> builtins;
+
+    // Execution state
+    struct CallFrame {
+        std::string funcName;
+        int ip;
+        std::map<std::string, Value> locals;
+        Value thisVal; // for method calls
+        bool hasThis;
+    };
+
+    std::vector<Value> stack;
+    std::vector<CallFrame> callStack;
+
+    void executeFunction(const std::string& name, std::vector<Value> args, bool isMethod = false, Value thisVal = Value());
+    Value runFrame(CallFrame& frame, const VMFunc& func);
+    
+    Value pop();
+    void push(const Value& v);
+    Value& top();
+    
+    Value getLocal(const CallFrame& frame, const std::string& name);
+    void setLocal(CallFrame& frame, const std::string& name, const Value& val);
+    
+    // Arithmetic helpers
+    Value addValues(const Value& a, const Value& b);
+    Value subValues(const Value& a, const Value& b);
+    Value mulValues(const Value& a, const Value& b);
+    Value divValues(const Value& a, const Value& b);
+    Value modValues(const Value& a, const Value& b);
+    Value compareValues(const std::string& op, const Value& a, const Value& b);
+};
