@@ -21,4 +21,5 @@ private:
     Token readNumber();
     Token readString();
     Token readIdentifierOrKeyword();
+    Token readOperatorOrDelimiter();
 };

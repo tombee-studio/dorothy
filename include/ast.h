@@ -2,112 +2,80 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <variant>
 
 // Forward declarations
 struct ASTNode;
-using ASTNodePtr = std::shared_ptr<ASTNode>;
+using ASTNodePtr = std::unique_ptr<ASTNode>;
 
 enum class ASTNodeType {
     // Program
-    Program,
-
+    PROGRAM,
+    
     // Declarations
-    FunctionDecl,
-    StructDecl,
-    ImportDecl,
-    VarDecl,
-    ConstructorDecl,
-    MemberMethodDecl,
-
+    FUNC_DECL,
+    STRUCT_DECL,
+    VAR_DECL,
+    IMPORT_DECL,
+    PARAM,
+    
+    // Struct members
+    STRUCT_FIELD,
+    STRUCT_CONSTRUCTOR,
+    STRUCT_METHOD,
+    
     // Statements
-    Block,
-    ReturnStmt,
-    IfStmt,
-    WhileStmt,
-    ForStmt,
-    ExprStmt,
-
+    BLOCK,
+    RETURN_STMT,
+    IF_STMT,
+    WHILE_STMT,
+    FOR_STMT,
+    EXPR_STMT,
+    
     // Expressions
-    IntLiteral,
-    FloatLiteral,
-    StringLiteral,
-    Identifier,
-    BinaryOp,
-    AssignOp,
-    CompoundAssignOp,
-    CallExpr,
-    IndexExpr,
-    MemberAccess,
-    MethodCall,
-    AddressOf,
-    Deref,
-    This,
-    StructInit,
-    ArrayInit,
+    ASSIGN_EXPR,
+    BINARY_EXPR,
+    UNARY_EXPR,
+    CALL_EXPR,
+    METHOD_CALL_EXPR,
+    MEMBER_ACCESS_EXPR,
+    INDEX_EXPR,
+    IDENTIFIER_EXPR,
+    THIS_EXPR,
+    INT_LITERAL,
+    FLOAT_LITERAL,
+    STRING_LITERAL,
+    ARRAY_LITERAL,
 };
 
 struct TypeInfo {
-    std::string baseType;   // "int", "char", "long", "float", "double", "void", or struct name
+    std::string base;       // int, char, long, float, double, void, or struct name
     bool isPointer = false;
-    bool isArray = false;
-    int arraySize = 0;
-};
-
-struct Parameter {
-    TypeInfo type;
-    std::string name;
+    int arraySize = 0;      // 0 means not an array
 };
 
 struct ASTNode {
     ASTNodeType type;
-
-    // For literals
-    int intValue = 0;
-    double floatValue = 0.0;
-    std::string strValue;
-
-    // For declarations
+    
+    // Common fields
     std::string name;
+    std::string op;
     TypeInfo typeInfo;
-    TypeInfo returnType;
-
+    
+    // Value for literals
+    std::variant<long long, double, std::string> value;
+    
     // Children
     std::vector<ASTNodePtr> children;
-    std::vector<Parameter> params;
-
-    // For binary ops
-    std::string op;
-
-    // For if/while/for
-    ASTNodePtr condition;
-    ASTNodePtr thenBranch;
-    ASTNodePtr elseBranch;
-    ASTNodePtr init;
-    ASTNodePtr update;
-
-    // For function/method body
-    ASTNodePtr body;
-
-    // For call expressions
-    ASTNodePtr callee;
-    std::vector<ASTNodePtr> args;
-
-    // For member access / method call
-    ASTNodePtr object;
-    std::string memberName;
-
-    // For struct declarations
-    std::vector<Parameter> fields;
-    std::vector<ASTNodePtr> methods;      // MemberMethodDecl nodes
-    ASTNodePtr constructor;               // ConstructorDecl node
-
-    // For array init
-    std::vector<ASTNodePtr> elements;
+    
+    // For functions/methods
+    std::vector<std::pair<std::string, TypeInfo>> params;  // (name, type)
+    TypeInfo returnType;
+    
+    // Line info
+    int line = 0;
+    int col = 0;
 };
 
-// Helper factory functions
+// Helper to create nodes
 ASTNodePtr makeNode(ASTNodeType type);
-ASTNodePtr makeIntLiteral(int value);
-ASTNodePtr makeFloatLiteral(double value);
-ASTNodePtr makeStringLiteral(const std::string& value);
-ASTNodePtr makeIdentifier(const std::string& name);

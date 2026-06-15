@@ -1,70 +1,76 @@
 #pragma once
 #include <string>
-#include <vector>
+#include <variant>
 
-enum TokenType {
+enum class TokenType {
     // Literals
-    TOKEN_INT_LITERAL,
-    TOKEN_FLOAT_LITERAL,
-    TOKEN_STRING_LITERAL,
-    TOKEN_CHAR_LITERAL,
-
-    // Identifiers & Keywords
-    TOKEN_IDENTIFIER,
-    TOKEN_FUNC,
-    TOKEN_RETURN,
-    TOKEN_IF,
-    TOKEN_ELSE,
-    TOKEN_WHILE,
-    TOKEN_FOR,
-    TOKEN_IMPORT,
-    TOKEN_STRUCT,
-    TOKEN_VAR,
-    TOKEN_CONSTRUCTOR,
-    TOKEN_THIS,
-    TOKEN_VOID,
-
-    // Type keywords
-    TOKEN_INT_TYPE,
-    TOKEN_CHAR_TYPE,
-    TOKEN_LONG_TYPE,
-    TOKEN_FLOAT_TYPE,
-    TOKEN_DOUBLE_TYPE,
-
+    INT_LITERAL,
+    FLOAT_LITERAL,
+    STRING_LITERAL,
+    
+    // Identifiers
+    IDENTIFIER,
+    
+    // Keywords
+    FUNC,
+    RETURN,
+    IF,
+    ELSE,
+    WHILE,
+    FOR,
+    IMPORT,
+    STRUCT,
+    VAR,
+    THIS,
+    CONSTRUCTOR,
+    VOID,
+    NEW,
+    
+    // Types
+    TYPE_INT,
+    TYPE_CHAR,
+    TYPE_LONG,
+    TYPE_FLOAT,
+    TYPE_DOUBLE,
+    
     // Operators
-    TOKEN_PLUS,
-    TOKEN_MINUS,
-    TOKEN_STAR,
-    TOKEN_SLASH,
-    TOKEN_PERCENT,
-    TOKEN_AMPERSAND,
-    TOKEN_ASSIGN,
-    TOKEN_PLUS_ASSIGN,
-    TOKEN_MINUS_ASSIGN,
-    TOKEN_STAR_ASSIGN,
-    TOKEN_SLASH_ASSIGN,
-
+    PLUS,
+    MINUS,
+    STAR,
+    SLASH,
+    PERCENT,
+    AMPERSAND,
+    
     // Comparison
-    TOKEN_EQ,
-    TOKEN_NEQ,
-    TOKEN_LT,
-    TOKEN_LE,
-    TOKEN_GT,
-    TOKEN_GE,
-
+    EQ,
+    NEQ,
+    LT,
+    LE,
+    GT,
+    GE,
+    
+    // Assignment
+    ASSIGN,
+    PLUS_ASSIGN,
+    MINUS_ASSIGN,
+    STAR_ASSIGN,
+    SLASH_ASSIGN,
+    
     // Delimiters
-    TOKEN_LPAREN,
-    TOKEN_RPAREN,
-    TOKEN_LBRACE,
-    TOKEN_RBRACE,
-    TOKEN_LBRACKET,
-    TOKEN_RBRACKET,
-    TOKEN_SEMICOLON,
-    TOKEN_COLON,
-    TOKEN_COMMA,
-    TOKEN_DOT,
-
-    TOKEN_EOF
+    LPAREN,
+    RPAREN,
+    LBRACE,
+    RBRACE,
+    LBRACKET,
+    RBRACKET,
+    SEMICOLON,
+    COLON,
+    COMMA,
+    DOT,
+    
+    // Special
+    EOF_TOKEN,
+    UNKNOWN
 };
 
 struct Token {

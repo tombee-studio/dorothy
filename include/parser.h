@@ -6,29 +6,33 @@
 
 class Parser {
 public:
-    explicit Parser(const std::vector<Token>& tokens);
+    explicit Parser(std::vector<Token> tokens);
     ASTNodePtr parse();
 
 private:
     std::vector<Token> tokens;
     size_t pos;
 
-    Token current() const;
-    Token peek(int offset = 1) const;
+    Token& current();
+    Token& peek(int offset = 1);
     Token consume();
-    Token expect(TokenType type, const std::string& msg = "");
+    Token expect(TokenType type);
     bool check(TokenType type) const;
-    bool match(TokenType type);
+    bool checkNext(TokenType type) const;
+    void advance();
 
-    // Top-level
+    ASTNodePtr parseProgram();
     ASTNodePtr parseTopLevel();
-    ASTNodePtr parseFunctionDecl();
+    ASTNodePtr parseImport();
+    ASTNodePtr parseFuncDecl();
     ASTNodePtr parseStructDecl();
-    ASTNodePtr parseImportDecl();
     ASTNodePtr parseVarDecl();
-    ASTNodePtr parseConstructorDecl(const std::string& structName);
-    ASTNodePtr parseMemberMethodDecl(const std::string& structName);
-
+    
+    // Struct members
+    ASTNodePtr parseStructField();
+    ASTNodePtr parseConstructorDecl();
+    ASTNodePtr parseMethodDecl();
+    
     // Statements
     ASTNodePtr parseBlock();
     ASTNodePtr parseStatement();
@@ -36,19 +40,24 @@ private:
     ASTNodePtr parseIfStmt();
     ASTNodePtr parseWhileStmt();
     ASTNodePtr parseForStmt();
+    ASTNodePtr parseVarDeclStmt();
     ASTNodePtr parseExprStmt();
-
+    
     // Expressions
-    ASTNodePtr parseExpression();
-    ASTNodePtr parseAssignment();
+    ASTNodePtr parseExpr();
+    ASTNodePtr parseAssign();
     ASTNodePtr parseComparison();
     ASTNodePtr parseAddSub();
     ASTNodePtr parseMulDiv();
     ASTNodePtr parseUnary();
     ASTNodePtr parsePostfix();
     ASTNodePtr parsePrimary();
-
-    // Types
-    TypeInfo parseTypeInfo();
-    std::vector<Parameter> parseParamList();
+    
+    // Type parsing
+    TypeInfo parseType();
+    std::vector<std::pair<std::string, TypeInfo>> parseParams();
+    std::vector<ASTNodePtr> parseArgs();
+    
+    bool isTypeToken() const;
+    bool isTypeToken(const Token& t) const;
 };

@@ -1,6 +1,28 @@
 #include "lexer.h"
 #include <cctype>
 #include <stdexcept>
+#include <unordered_map>
+
+static const std::unordered_map<std::string, TokenType> keywords = {
+    {"func",        TokenType::FUNC},
+    {"return",      TokenType::RETURN},
+    {"if",          TokenType::IF},
+    {"else",        TokenType::ELSE},
+    {"while",       TokenType::WHILE},
+    {"for",         TokenType::FOR},
+    {"import",      TokenType::IMPORT},
+    {"struct",      TokenType::STRUCT},
+    {"var",         TokenType::VAR},
+    {"this",        TokenType::THIS},
+    {"constructor", TokenType::CONSTRUCTOR},
+    {"void",        TokenType::VOID},
+    {"new",         TokenType::NEW},
+    {"int",         TokenType::TYPE_INT},
+    {"char",        TokenType::TYPE_CHAR},
+    {"long",        TokenType::TYPE_LONG},
+    {"float",       TokenType::TYPE_FLOAT},
+    {"double",      TokenType::TYPE_DOUBLE},
+};
 
 Lexer::Lexer(const std::string& source)
     : source(source), pos(0), line(1), col(1) {}
@@ -11,9 +33,8 @@ char Lexer::current() const {
 }
 
 char Lexer::peek(int offset) const {
-    size_t p = pos + offset;
-    if (p >= source.size()) return '\0';
-    return source[p];
+    if (pos + offset >= source.size()) return '\0';
+    return source[pos + offset];
 }
 
 void Lexer::advance() {
@@ -45,99 +66,100 @@ void Lexer::skipWhitespaceAndComments() {
     }
 }
 
-bool Lexer::tokenize_str(string p, int* ppos) {
-    if (p[*ppos] != '\"') return false;
-    (*ppos)++;
-    string s;
-    while (p[*ppos] != '\"') {
-        if (p[*ppos] == '\\') {
-            (*ppos)++;
-            switch (p[*ppos]) {
-                case 'n':  s += '\n'; break;
-                case 't':  s += '\t'; break;
-                case 'r':  s += '\r'; break;
-                case '\\': s += '\\'; break;
-                case '"':  s += '"';  break;
-                case '0':  s += '\0'; break;
-                default:   s += p[*ppos]; break;
-            }
-        } else {
-            s += p[*ppos];
-        }
-        (*ppos)++;
-    }
-    (*ppos)++;  // consume closing "
-    tokens.push_back(Token::make_string(s));
-    return true;
-}
-
 Token Lexer::readNumber() {
     int startLine = line, startCol = col;
-    std::string num;
+    std::string val;
     bool isFloat = false;
     while (pos < source.size() && (std::isdigit(current()) || current() == '.')) {
         if (current() == '.') {
             if (isFloat) break;
             isFloat = true;
         }
-        num += current();
+        val += current();
         advance();
     }
-    if (isFloat) {
-        return {TOKEN_FLOAT_LITERAL, num, startLine, startCol};
-    }
-    return {TOKEN_INT_LITERAL, num, startLine, startCol};
+    TokenType t = isFloat ? TokenType::FLOAT_LITERAL : TokenType::INT_LITERAL;
+    return Token{t, val, startLine, startCol};
 }
 
 Token Lexer::readString() {
     int startLine = line, startCol = col;
     advance(); // skip "
-    std::string s;
+    std::string val;
     while (pos < source.size() && current() != '"') {
         if (current() == '\\') {
             advance();
             switch (current()) {
-                case 'n': s += '\n'; break;
-                case 't': s += '\t'; break;
-                case '\\': s += '\\'; break;
-                case '"': s += '"'; break;
-                default: s += current(); break;
+                case 'n': val += '\n'; break;
+                case 't': val += '\t'; break;
+                case '\\': val += '\\'; break;
+                case '"': val += '"'; break;
+                default: val += current(); break;
             }
         } else {
-            s += current();
+            val += current();
         }
         advance();
     }
-    if (pos < source.size()) advance(); // skip closing "
-    return {TOKEN_STRING_LITERAL, s, startLine, startCol};
+    advance(); // skip closing "
+    return Token{TokenType::STRING_LITERAL, val, startLine, startCol};
 }
 
 Token Lexer::readIdentifierOrKeyword() {
     int startLine = line, startCol = col;
-    std::string id;
+    std::string val;
     while (pos < source.size() && (std::isalnum(current()) || current() == '_')) {
-        id += current();
+        val += current();
         advance();
     }
-    // Keywords
-    if (id == "func")        return {TOKEN_FUNC, id, startLine, startCol};
-    if (id == "return")      return {TOKEN_RETURN, id, startLine, startCol};
-    if (id == "if")          return {TOKEN_IF, id, startLine, startCol};
-    if (id == "else")        return {TOKEN_ELSE, id, startLine, startCol};
-    if (id == "while")       return {TOKEN_WHILE, id, startLine, startCol};
-    if (id == "for")         return {TOKEN_FOR, id, startLine, startCol};
-    if (id == "import")      return {TOKEN_IMPORT, id, startLine, startCol};
-    if (id == "struct")      return {TOKEN_STRUCT, id, startLine, startCol};
-    if (id == "var")         return {TOKEN_VAR, id, startLine, startCol};
-    if (id == "constructor") return {TOKEN_CONSTRUCTOR, id, startLine, startCol};
-    if (id == "this")        return {TOKEN_THIS, id, startLine, startCol};
-    if (id == "void")        return {TOKEN_VOID, id, startLine, startCol};
-    if (id == "int")         return {TOKEN_INT_TYPE, id, startLine, startCol};
-    if (id == "char")        return {TOKEN_CHAR_TYPE, id, startLine, startCol};
-    if (id == "long")        return {TOKEN_LONG_TYPE, id, startLine, startCol};
-    if (id == "float")       return {TOKEN_FLOAT_TYPE, id, startLine, startCol};
-    if (id == "double")      return {TOKEN_DOUBLE_TYPE, id, startLine, startCol};
-    return {TOKEN_IDENTIFIER, id, startLine, startCol};
+    auto it = keywords.find(val);
+    TokenType t = (it != keywords.end()) ? it->second : TokenType::IDENTIFIER;
+    return Token{t, val, startLine, startCol};
+}
+
+Token Lexer::readOperatorOrDelimiter() {
+    int startLine = line, startCol = col;
+    char c = current();
+    advance();
+    switch (c) {
+        case '+':
+            if (current() == '=') { advance(); return {TokenType::PLUS_ASSIGN, "+=", startLine, startCol}; }
+            return {TokenType::PLUS, "+", startLine, startCol};
+        case '-':
+            if (current() == '=') { advance(); return {TokenType::MINUS_ASSIGN, "-=", startLine, startCol}; }
+            return {TokenType::MINUS, "-", startLine, startCol};
+        case '*':
+            if (current() == '=') { advance(); return {TokenType::STAR_ASSIGN, "*=", startLine, startCol}; }
+            return {TokenType::STAR, "*", startLine, startCol};
+        case '/':
+            if (current() == '=') { advance(); return {TokenType::SLASH_ASSIGN, "/=", startLine, startCol}; }
+            return {TokenType::SLASH, "/", startLine, startCol};
+        case '%': return {TokenType::PERCENT, "%", startLine, startCol};
+        case '&': return {TokenType::AMPERSAND, "&", startLine, startCol};
+        case '=':
+            if (current() == '=') { advance(); return {TokenType::EQ, "==", startLine, startCol}; }
+            return {TokenType::ASSIGN, "=", startLine, startCol};
+        case '!':
+            if (current() == '=') { advance(); return {TokenType::NEQ, "!=", startLine, startCol}; }
+            return {TokenType::UNKNOWN, "!", startLine, startCol};
+        case '<':
+            if (current() == '=') { advance(); return {TokenType::LE, "<=", startLine, startCol}; }
+            return {TokenType::LT, "<", startLine, startCol};
+        case '>':
+            if (current() == '=') { advance(); return {TokenType::GE, ">=", startLine, startCol}; }
+            return {TokenType::GT, ">", startLine, startCol};
+        case '(': return {TokenType::LPAREN, "(", startLine, startCol};
+        case ')': return {TokenType::RPAREN, ")", startLine, startCol};
+        case '{': return {TokenType::LBRACE, "{", startLine, startCol};
+        case '}': return {TokenType::RBRACE, "}", startLine, startCol};
+        case '[': return {TokenType::LBRACKET, "[", startLine, startCol};
+        case ']': return {TokenType::RBRACKET, "]", startLine, startCol};
+        case ';': return {TokenType::SEMICOLON, ";", startLine, startCol};
+        case ':': return {TokenType::COLON, ":", startLine, startCol};
+        case ',': return {TokenType::COMMA, ",", startLine, startCol};
+        case '.': return {TokenType::DOT, ".", startLine, startCol};
+        default:  return {TokenType::UNKNOWN, std::string(1,c), startLine, startCol};
+    }
 }
 
 std::vector<Token> Lexer::tokenize() {
@@ -145,75 +167,21 @@ std::vector<Token> Lexer::tokenize() {
     while (true) {
         skipWhitespaceAndComments();
         if (pos >= source.size()) {
-            tokens.push_back({TOKEN_EOF, "", line, col});
+            tokens.push_back({TokenType::EOF_TOKEN, "", line, col});
             break;
         }
-        int startLine = line, startCol = col;
         char c = current();
-
+        Token tok;
         if (std::isdigit(c)) {
-            tokens.push_back(readNumber());
-            continue;
+            tok = readNumber();
+        } else if (c == '"') {
+            tok = readString();
+        } else if (std::isalpha(c) || c == '_') {
+            tok = readIdentifierOrKeyword();
+        } else {
+            tok = readOperatorOrDelimiter();
         }
-        if (c == '"') {
-            tokens.push_back(readString());
-            continue;
-        }
-        if (std::isalpha(c) || c == '_') {
-            tokens.push_back(readIdentifierOrKeyword());
-            continue;
-        }
-
-        // Single/double char operators
-        advance();
-        switch (c) {
-            case '+':
-                if (current() == '=') { advance(); tokens.push_back({TOKEN_PLUS_ASSIGN, "+=", startLine, startCol}); }
-                else tokens.push_back({TOKEN_PLUS, "+", startLine, startCol});
-                break;
-            case '-':
-                if (current() == '=') { advance(); tokens.push_back({TOKEN_MINUS_ASSIGN, "-=", startLine, startCol}); }
-                else tokens.push_back({TOKEN_MINUS, "-", startLine, startCol});
-                break;
-            case '*':
-                if (current() == '=') { advance(); tokens.push_back({TOKEN_STAR_ASSIGN, "*=", startLine, startCol}); }
-                else tokens.push_back({TOKEN_STAR, "*", startLine, startCol});
-                break;
-            case '/':
-                if (current() == '=') { advance(); tokens.push_back({TOKEN_SLASH_ASSIGN, "/=", startLine, startCol}); }
-                else tokens.push_back({TOKEN_SLASH, "/", startLine, startCol});
-                break;
-            case '%': tokens.push_back({TOKEN_PERCENT, "%", startLine, startCol}); break;
-            case '&': tokens.push_back({TOKEN_AMPERSAND, "&", startLine, startCol}); break;
-            case '=':
-                if (current() == '=') { advance(); tokens.push_back({TOKEN_EQ, "==", startLine, startCol}); }
-                else tokens.push_back({TOKEN_ASSIGN, "=", startLine, startCol});
-                break;
-            case '!':
-                if (current() == '=') { advance(); tokens.push_back({TOKEN_NEQ, "!=", startLine, startCol}); }
-                else throw std::runtime_error("Unexpected '!' at line " + std::to_string(startLine));
-                break;
-            case '<':
-                if (current() == '=') { advance(); tokens.push_back({TOKEN_LE, "<=", startLine, startCol}); }
-                else tokens.push_back({TOKEN_LT, "<", startLine, startCol});
-                break;
-            case '>':
-                if (current() == '=') { advance(); tokens.push_back({TOKEN_GE, ">=", startLine, startCol}); }
-                else tokens.push_back({TOKEN_GT, ">", startLine, startCol});
-                break;
-            case '(': tokens.push_back({TOKEN_LPAREN, "(", startLine, startCol}); break;
-            case ')': tokens.push_back({TOKEN_RPAREN, ")", startLine, startCol}); break;
-            case '{': tokens.push_back({TOKEN_LBRACE, "{", startLine, startCol}); break;
-            case '}': tokens.push_back({TOKEN_RBRACE, "}", startLine, startCol}); break;
-            case '[': tokens.push_back({TOKEN_LBRACKET, "[", startLine, startCol}); break;
-            case ']': tokens.push_back({TOKEN_RBRACKET, "]", startLine, startCol}); break;
-            case ';': tokens.push_back({TOKEN_SEMICOLON, ";", startLine, startCol}); break;
-            case ':': tokens.push_back({TOKEN_COLON, ":", startLine, startCol}); break;
-            case ',': tokens.push_back({TOKEN_COMMA, ",", startLine, startCol}); break;
-            case '.': tokens.push_back({TOKEN_DOT, ".", startLine, startCol}); break;
-            default:
-                throw std::runtime_error(std::string("Unknown character '") + c + "' at line " + std::to_string(startLine));
-        }
+        tokens.push_back(tok);
     }
     return tokens;
 }
