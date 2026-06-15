@@ -1,165 +1,234 @@
-/* Copyright 2022(Tomoya Bansho@tomoya-kwansei) */
-#include "../include/lexer.hpp"
+#include "lexer.h"
+#include <cctype>
+#include <stdexcept>
 
-vector<Token> Lexer::lex(string p) {
-    int pos = 0;
-    tokenize(p, &pos);
-    tokens.push_back(Token::make_operator(Token::TK_EOF));
-    return tokens;
+Lexer::Lexer(const std::string& source) : source(source), pos(0), line(1) {}
+
+char Lexer::current() {
+    if (pos >= source.size()) return '\0';
+    return source[pos];
 }
 
-void Lexer::tokenize(string p, int* ppos) {
-    while (p.size() > *ppos) {
-        if (skip(p, ppos)) continue;
-        if (tokenize_keyword(p, ppos, "if", Token::KW_IF)) continue;
-        if (tokenize_keyword(p, ppos, "else", Token::KW_ELSE)) continue;
-        if (tokenize_keyword(p, ppos, "var", Token::KW_VAR)) continue;
-        if (tokenize_keyword(p, ppos, "let", Token::KW_LET)) continue;
-        if (tokenize_keyword(p, ppos, "struct", Token::KW_STRUCT)) continue;
-        if (tokenize_keyword(p, ppos, "constructor", Token::KW_CONSTRUCTOR)) continue;
-        if (tokenize_keyword(p, ppos, "this", Token::KW_THIS)) continue;
-        if (tokenize_keyword(p, ppos, "double", Token::KW_DOUBLE)) continue;
-        if (tokenize_keyword(p, ppos, "float", Token::KW_FLOAT)) continue;
-        if (tokenize_keyword(p, ppos, "int", Token::KW_INT)) continue;
-        if (tokenize_keyword(p, ppos, "long", Token::KW_LONG)) continue;
-        if (tokenize_keyword(p, ppos, "char", Token::KW_CHAR)) continue;
-        if (tokenize_keyword(p, ppos, "while", Token::KW_WHILE)) continue;
-        if (tokenize_keyword(p, ppos, "return", Token::KW_RETURN)) continue;
-        if (tokenize_keyword(p, ppos, "func", Token::KW_FUNC)) continue;
-        if (tokenize_keyword(p, ppos, "for", Token::KW_FOR)) continue;
-        if (tokenize_keyword(p, ppos, "import", Token::KW_IMPORT)) continue;
-        if (tokenize_keyword(p, ppos, "<=", Token::TK_LE)) continue;
-        if (tokenize_keyword(p, ppos, ">=", Token::TK_GE)) continue;
-        if (tokenize_keyword(p, ppos, "==", Token::TK_EQ)) continue;
-        if (tokenize_keyword(p, ppos, "!=", Token::TK_NE)) continue;
-        if (tokenize_operator(p, ppos, '&')) continue;
-        if (tokenize_operator(p, ppos, ';')) continue;
-        if (tokenize_operator(p, ppos, '=')) continue;
-        if (tokenize_operator(p, ppos, ',')) continue;
-        if (tokenize_operator(p, ppos, '+')) continue;
-        if ((size_t)(*ppos + 1) < p.size() && p[*ppos] == '-' && p[*ppos + 1] == '>') {
-            *ppos += 2;
-            tokens.push_back(Token::make_operator(Token::TK_ARROW));
-            continue;
-        }
-        if (tokenize_operator(p, ppos, '-')) continue;
-        if (tokenize_operator(p, ppos, '*')) continue;
-        if (tokenize_operator(p, ppos, '/')) continue;
-        if (tokenize_operator(p, ppos, '%')) continue;
-        if (tokenize_operator(p, ppos, '>')) continue;
-        if (tokenize_operator(p, ppos, '<')) continue;
-        if (tokenize_operator(p, ppos, '{')) continue;
-        if (tokenize_operator(p, ppos, '}')) continue;
-        if (tokenize_operator(p, ppos, '(')) continue;
-        if (tokenize_operator(p, ppos, ')')) continue;
-        if (tokenize_operator(p, ppos, '[')) continue;
-        if (tokenize_operator(p, ppos, ']')) continue;
-        if (tokenize_operator(p, ppos, ':')) continue;
-        if (tokenize_operator(p, ppos, '.')) continue;
-        if (tokenize_str(p, ppos)) continue;
-        if (tokenize_char(p, ppos)) continue;
-        if (tokenize_id(p, ppos)) continue;
-        if (tokenize_float(p, ppos)) continue;
-        if (tokenize_int(p, ppos)) continue;
-        throw LexerError(format("undefined token: %c", p[*ppos]).data());
+char Lexer::peek(int offset) {
+    size_t p = pos + offset;
+    if (p >= source.size()) return '\0';
+    return source[p];
+}
+
+void Lexer::advance() {
+    if (pos < source.size()) {
+        if (source[pos] == '\n') line++;
+        pos++;
     }
 }
 
-bool Lexer::skip(string p, int* ppos) {
-    if (p[*ppos] == ' ' || p[*ppos] == '\n') {
-        (*ppos)++;
-        return true;
-    }
-    return false;
-}
-
-bool Lexer::tokenize_int(string p, int* ppos) {
-    int start = *ppos;
-    if (p[start] < '0' || p[start] > '9') return false;
-    while (p[*ppos] >= '0' && p[*ppos] <= '9') (*ppos)++;
-    string str = p.substr(start, *ppos - start);
-    tokens.push_back(Token::make_int(stoi(str)));
-    return true;
-}
-
-bool Lexer::tokenize_char(string p, int* ppos) {
-    if (p[*ppos] != '\'') return false;
-    (*ppos)++;
-    tokens.push_back(Token::make_int(p[*ppos]));
-    (*ppos)++;
-    if (p[*ppos] != '\'') exit(-1);
-    (*ppos)++;
-    return true;
-}
-
-bool Lexer::tokenize_str(string p, int* ppos) {
-    if (p[*ppos] != '\"') return false;
-    (*ppos)++;
-    tokens.push_back(Token::make_operator((Token::Type)'{'));
-    while (true) {
-        if (p[*ppos] == '\"') {
+void Lexer::skipWhitespaceAndComments() {
+    while (pos < source.size()) {
+        char c = current();
+        if (std::isspace(c)) {
+            advance();
+        } else if (c == '/' && peek() == '/') {
+            // Line comment
+            while (pos < source.size() && current() != '\n') advance();
+        } else if (c == '/' && peek() == '*') {
+            // Block comment
+            advance(); advance();
+            while (pos < source.size()) {
+                if (current() == '*' && peek() == '/') {
+                    advance(); advance();
+                    break;
+                }
+                advance();
+            }
+        } else {
             break;
         }
-        tokens.push_back(Token::make_int(p[*ppos]));
-        tokens.push_back(Token::make_operator((Token::Type)','));
-        (*ppos)++;
     }
-    tokens.push_back(Token::make_int(0));
-    tokens.push_back(Token::make_operator((Token::Type)'}'));
-    (*ppos)++;
-    return true;
 }
 
-bool Lexer::tokenize_float(string p, int* ppos) {
-    int start = *ppos;
-    if (p[start] < '0' || p[start] > '9') return false;
-    int i = start;
-    while (p[i] >= '0' && p[i] <= '9') i++;
-    if (p[i] != '.') return false;
-    i++;
-    if (p[i] < '0' || p[i] > '9') return false;
-    while (p[i] >= '0' && p[i] <= '9') i++;
-    string str = p.substr(start, i - start);
-    *ppos = i;
-    tokens.push_back(Token::make_float(stod(str)));
-    return true;
-}
-
-bool Lexer::tokenize_id(string p, int* ppos) {
-    int start = *ppos;
-    if (p[start] < 'A' || p[start] > 'z' || p[start] == '_') return false;
-    while ((p[*ppos] >= 'A' && p[*ppos] <= 'Z') ||
-           (p[*ppos] >= 'a' && p[*ppos] <= 'z') ||
-           (p[*ppos] >= '0' && p[*ppos] <= '9') || p[*ppos] == '_')
-        (*ppos)++;
-    string str = p.substr(start, *ppos - start);
-    tokens.push_back(Token::make_id(str));
-    return true;
-}
-
-bool Lexer::tokenize_keyword(string p, int* ppos, string keyword,
-                             Token::Type type) {
-    int nextIndex = (*ppos) + keyword.size();
-    if (p.substr(*ppos, keyword.size()) != keyword) {
-        return false;
+Token Lexer::readNumber() {
+    std::string num;
+    bool is_float = false;
+    while (pos < source.size() && (std::isdigit(current()) || current() == '.')) {
+        if (current() == '.') {
+            if (is_float) break;
+            is_float = true;
+        }
+        num += current();
+        advance();
     }
-    // Reject if immediately followed by a letter or underscore (part of an identifier)
-    char next = p[nextIndex];
-    bool is_id_char = (next >= 'A' && next <= 'Z') ||
-                      (next >= 'a' && next <= 'z') ||
-                      (next >= '0' && next <= '9') ||
-                      next == '_';
-    if (is_id_char) return false;
-    (*ppos) += keyword.size();
-    tokens.push_back(Token::make_operator(type));
-    return true;
+    if (is_float) {
+        return Token(TokenType::FLOAT_LITERAL, num, line);
+    }
+    return Token(TokenType::INTEGER, num, line);
 }
 
-bool Lexer::tokenize_operator(string p, int* ppos, char c) {
-    if (p[*ppos] == c) {
-        (*ppos)++;
-        tokens.push_back(Token::make_operator((Token::Type)c));
-        return true;
-    } else
-        return false;
+Token Lexer::readString() {
+    advance(); // skip opening quote
+    std::string str;
+    while (pos < source.size() && current() != '"') {
+        if (current() == '\\') {
+            advance();
+            switch (current()) {
+                case 'n': str += '\n'; break;
+                case 't': str += '\t'; break;
+                case '\\': str += '\\'; break;
+                case '"': str += '"'; break;
+                default: str += current(); break;
+            }
+        } else {
+            str += current();
+        }
+        advance();
+    }
+    if (pos < source.size()) advance(); // skip closing quote
+    return Token(TokenType::STRING_LITERAL, str, line);
+}
+
+Token Lexer::readIdentifierOrKeyword() {
+    std::string ident;
+    while (pos < source.size() && (std::isalnum(current()) || current() == '_')) {
+        ident += current();
+        advance();
+    }
+    
+    // Keywords
+    if (ident == "func") return Token(TokenType::FUNC, ident, line);
+    if (ident == "return") return Token(TokenType::RETURN, ident, line);
+    if (ident == "if") return Token(TokenType::IF, ident, line);
+    if (ident == "else") return Token(TokenType::ELSE, ident, line);
+    if (ident == "while") return Token(TokenType::WHILE, ident, line);
+    if (ident == "for") return Token(TokenType::FOR, ident, line);
+    if (ident == "import") return Token(TokenType::IMPORT, ident, line);
+    if (ident == "struct") return Token(TokenType::STRUCT, ident, line);
+    if (ident == "var") return Token(TokenType::VAR, ident, line);
+    if (ident == "constructor") return Token(TokenType::CONSTRUCTOR, ident, line);
+    if (ident == "this") return Token(TokenType::THIS, ident, line);
+    if (ident == "void") return Token(TokenType::VOID, ident, line);
+    if (ident == "int") return Token(TokenType::TYPE_INT, ident, line);
+    if (ident == "char") return Token(TokenType::TYPE_CHAR, ident, line);
+    if (ident == "long") return Token(TokenType::TYPE_LONG, ident, line);
+    if (ident == "float") return Token(TokenType::TYPE_FLOAT, ident, line);
+    if (ident == "double") return Token(TokenType::TYPE_DOUBLE, ident, line);
+    
+    return Token(TokenType::IDENTIFIER, ident, line);
+}
+
+std::vector<Token> Lexer::tokenize() {
+    std::vector<Token> tokens;
+    
+    while (true) {
+        skipWhitespaceAndComments();
+        if (pos >= source.size()) {
+            tokens.push_back(Token(TokenType::END_OF_FILE, "", line));
+            break;
+        }
+        
+        char c = current();
+        
+        if (std::isdigit(c)) {
+            tokens.push_back(readNumber());
+        } else if (c == '"') {
+            tokens.push_back(readString());
+        } else if (std::isalpha(c) || c == '_') {
+            tokens.push_back(readIdentifierOrKeyword());
+        } else {
+            switch (c) {
+                case '+':
+                    advance();
+                    if (current() == '=') { advance(); tokens.push_back(Token(TokenType::PLUS_ASSIGN, "+=", line)); }
+                    else tokens.push_back(Token(TokenType::PLUS, "+", line));
+                    break;
+                case '-':
+                    advance();
+                    if (current() == '=') { advance(); tokens.push_back(Token(TokenType::MINUS_ASSIGN, "-=", line)); }
+                    else tokens.push_back(Token(TokenType::MINUS, "-", line));
+                    break;
+                case '*':
+                    advance();
+                    if (current() == '=') { advance(); tokens.push_back(Token(TokenType::STAR_ASSIGN, "*=", line)); }
+                    else tokens.push_back(Token(TokenType::STAR, "*", line));
+                    break;
+                case '/':
+                    advance();
+                    if (current() == '=') { advance(); tokens.push_back(Token(TokenType::SLASH_ASSIGN, "/=", line)); }
+                    else tokens.push_back(Token(TokenType::SLASH, "/", line));
+                    break;
+                case '%':
+                    advance();
+                    tokens.push_back(Token(TokenType::PERCENT, "%", line));
+                    break;
+                case '=':
+                    advance();
+                    if (current() == '=') { advance(); tokens.push_back(Token(TokenType::EQ, "==", line)); }
+                    else tokens.push_back(Token(TokenType::ASSIGN, "=", line));
+                    break;
+                case '!':
+                    advance();
+                    if (current() == '=') { advance(); tokens.push_back(Token(TokenType::NEQ, "!=", line)); }
+                    else tokens.push_back(Token(TokenType::UNKNOWN, "!", line));
+                    break;
+                case '<':
+                    advance();
+                    if (current() == '=') { advance(); tokens.push_back(Token(TokenType::LE, "<=", line)); }
+                    else tokens.push_back(Token(TokenType::LT, "<", line));
+                    break;
+                case '>':
+                    advance();
+                    if (current() == '=') { advance(); tokens.push_back(Token(TokenType::GE, ">=", line)); }
+                    else tokens.push_back(Token(TokenType::GT, ">", line));
+                    break;
+                case '&':
+                    advance();
+                    tokens.push_back(Token(TokenType::AMP, "&", line));
+                    break;
+                case '(':
+                    advance();
+                    tokens.push_back(Token(TokenType::LPAREN, "(", line));
+                    break;
+                case ')':
+                    advance();
+                    tokens.push_back(Token(TokenType::RPAREN, ")", line));
+                    break;
+                case '{':
+                    advance();
+                    tokens.push_back(Token(TokenType::LBRACE, "{", line));
+                    break;
+                case '}':
+                    advance();
+                    tokens.push_back(Token(TokenType::RBRACE, "}", line));
+                    break;
+                case '[':
+                    advance();
+                    tokens.push_back(Token(TokenType::LBRACKET, "[", line));
+                    break;
+                case ']':
+                    advance();
+                    tokens.push_back(Token(TokenType::RBRACKET, "]", line));
+                    break;
+                case ';':
+                    advance();
+                    tokens.push_back(Token(TokenType::SEMICOLON, ";", line));
+                    break;
+                case ':':
+                    advance();
+                    tokens.push_back(Token(TokenType::COLON, ":", line));
+                    break;
+                case ',':
+                    advance();
+                    tokens.push_back(Token(TokenType::COMMA, ",", line));
+                    break;
+                case '.':
+                    advance();
+                    tokens.push_back(Token(TokenType::DOT, ".", line));
+                    break;
+                default:
+                    advance();
+                    tokens.push_back(Token(TokenType::UNKNOWN, std::string(1, c), line));
+                    break;
+            }
+        }
+    }
+    
+    return tokens;
 }
