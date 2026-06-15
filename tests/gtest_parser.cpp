@@ -214,3 +214,91 @@ TEST(ParserTest, ParseTypedFunctionArgs) {
     EXPECT_EQ(program[0]->getName(), "f");
     EXPECT_EQ(program[1]->getName(), "g");
 }
+
+// --- 戻り値型アノテーション ---
+
+TEST(ParserTest, ParseFunctionWithIntReturnType) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex("func add(a: int, b: int): int { return a; }");
+    auto program = parser.parse(tokens);
+    ASSERT_EQ(program.size(), 1u);
+    EXPECT_EQ(program[0]->getName(), "add");
+    EXPECT_EQ(program[0]->getRetType(), VarType::INT);
+    EXPECT_TRUE(program[0]->hasExplicitRetType());
+}
+
+TEST(ParserTest, ParseFunctionWithLongReturnType) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex("func f(): long { return 0; }");
+    auto program = parser.parse(tokens);
+    ASSERT_EQ(program.size(), 1u);
+    EXPECT_EQ(program[0]->getRetType(), VarType::LONG);
+    EXPECT_TRUE(program[0]->hasExplicitRetType());
+}
+
+TEST(ParserTest, ParseFunctionWithDoubleReturnType) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex("func pi(): double { return 3; }");
+    auto program = parser.parse(tokens);
+    ASSERT_EQ(program.size(), 1u);
+    EXPECT_EQ(program[0]->getRetType(), VarType::DOUBLE);
+    EXPECT_TRUE(program[0]->hasExplicitRetType());
+}
+
+TEST(ParserTest, ParseFunctionWithFloatReturnType) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex("func f(): float { return 0; }");
+    auto program = parser.parse(tokens);
+    ASSERT_EQ(program.size(), 1u);
+    EXPECT_EQ(program[0]->getRetType(), VarType::FLOAT);
+    EXPECT_TRUE(program[0]->hasExplicitRetType());
+}
+
+TEST(ParserTest, ParseFunctionWithCharReturnType) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex("func f(): char { return 0; }");
+    auto program = parser.parse(tokens);
+    ASSERT_EQ(program.size(), 1u);
+    EXPECT_EQ(program[0]->getRetType(), VarType::CHAR);
+    EXPECT_TRUE(program[0]->hasExplicitRetType());
+}
+
+TEST(ParserTest, ParseFunctionWithoutReturnTypeHasNoExplicitRetType) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex("func main() { return 0; }");
+    auto program = parser.parse(tokens);
+    ASSERT_EQ(program.size(), 1u);
+    EXPECT_FALSE(program[0]->hasExplicitRetType());
+}
+
+TEST(ParserTest, ParseFunctionReturnTypeInvalidKeyword) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex("func f(): badtype { return 0; }");
+    EXPECT_THROW(parser.parse(tokens), ParseError);
+}
+
+TEST(ParserTest, ParseFibonacciWithReturnType) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex(
+        "func fib(n: int): int { "
+        "  if (n == 1) { return 1; } "
+        "  if (n == 2) { return 1; } "
+        "  return fib(n - 1) + fib(n - 2); "
+        "} "
+        "func main(): int { return fib(10); }");
+    auto program = parser.parse(tokens);
+    ASSERT_EQ(program.size(), 2u);
+    EXPECT_EQ(program[0]->getName(), "fib");
+    EXPECT_EQ(program[0]->getRetType(), VarType::INT);
+    EXPECT_TRUE(program[0]->hasExplicitRetType());
+    EXPECT_EQ(program[1]->getName(), "main");
+    EXPECT_TRUE(program[1]->hasExplicitRetType());
+}

@@ -46,6 +46,32 @@ void Lexer::skipWhitespaceAndComments() {
     }
 }
 
+bool Lexer::tokenize_str(string p, int* ppos) {
+    if (p[*ppos] != '\"') return false;
+    (*ppos)++;
+    string s;
+    while (p[*ppos] != '\"') {
+        if (p[*ppos] == '\\') {
+            (*ppos)++;
+            switch (p[*ppos]) {
+                case 'n':  s += '\n'; break;
+                case 't':  s += '\t'; break;
+                case 'r':  s += '\r'; break;
+                case '\\': s += '\\'; break;
+                case '"':  s += '"';  break;
+                case '0':  s += '\0'; break;
+                default:   s += p[*ppos]; break;
+            }
+        } else {
+            s += p[*ppos];
+        }
+        (*ppos)++;
+    }
+    (*ppos)++;  // consume closing "
+    tokens.push_back(Token::make_string(s));
+    return true;
+}
+
 Token Lexer::readNumber() {
     std::string num;
     bool is_float = false;

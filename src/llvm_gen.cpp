@@ -1,10 +1,281 @@
 /* Copyright 2022(Tomoya Bansho@tomoya-kwansei) */
+#include <cstdio>
 #include <cstring>
+#include <map>
 #include "../include/ast.hpp"
 
 using std::to_string;
 using std::string;
 using std::vector;
+
+// ===== C header import: type conversion and clang AST parsing =====
+
+static string trim_str(const string& s) {
+    size_t a = s.find_first_not_of(" \t\r\n");
+    size_t b = s.find_last_not_of(" \t\r\n");
+    return (a == string::npos) ? "" : s.substr(a, b - a + 1);
+}
+
+// Convert a C type string (e.g. "const char *restrict") to an LLVM type.
+static string c_type_to_llvm(string t) {
+    t = trim_str(t);
+    // Pointer: any type containing '*' or '[]'
+    if (t.find('*') != string::npos || t.find('[') != string::npos) return "ptr";
+    // Remove qualifiers
+    for (const char* q : {"const ", "volatile ", "restrict ", "__restrict__ ",
+                           "__restrict ", "unsigned ", "signed "}) {
+        size_t pos;
+        string qw(q);
+        while ((pos = t.find(qw)) != string::npos) t.erase(pos, qw.size());
+    }
+    t = trim_str(t);
+    if (t == "void")   return "void";
+    if (t == "_Bool" || t == "bool") return "i1";
+    if (t == "char" || t == "signed char" || t == "unsigned char") return "i8";
+    if (t == "short" || t == "short int") return "i16";
+    if (t == "int" || t == "int32_t" || t == "uint32_t" || t == "wchar_t"
+     || t == "__int32_t" || t == "__uint32_t") return "i32";
+    if (t == "long" || t == "long int" || t == "long long" || t == "long long int"
+     || t == "size_t" || t == "__SIZE_TYPE__" || t == "ssize_t" || t == "__SSIZE_TYPE__"
+     || t == "ptrdiff_t" || t == "__PTRDIFF_TYPE__" || t == "intptr_t" || t == "uintptr_t"
+     || t == "int64_t" || t == "uint64_t" || t == "__int64_t" || t == "__uint64_t"
+     || t == "off_t" || t == "__off_t" || t == "__off64_t") return "i64";
+    if (t == "float")  return "float";
+    if (t == "double" || t == "long double") return "double";
+    return "i64";  // fallback
+}
+
+// Parse "int (const char *, ...)" → {ret_llvm, [param_llvm_or_"..."]}
+static std::pair<string, vector<string>> parse_c_func_type(const string& type_str) {
+    size_t lp = type_str.find('(');
+    if (lp == string::npos) return {"i64", {}};
+    string ret_c = trim_str(type_str.substr(0, lp));
+    string ret_llvm = c_type_to_llvm(ret_c);
+
+    size_t rp = type_str.rfind(')');
+    if (rp == string::npos || rp <= lp) return {ret_llvm, {}};
+    string params_str = trim_str(type_str.substr(lp + 1, rp - lp - 1));
+
+    vector<string> params;
+    if (params_str.empty() || params_str == "void") return {ret_llvm, params};
+
+    int depth = 0;
+    string cur;
+    for (char c : params_str) {
+        if (c == '(' || c == '<') { depth++; cur += c; }
+        else if (c == ')' || c == '>') { depth--; cur += c; }
+        else if (c == ',' && depth == 0) {
+            string p = trim_str(cur);
+            params.push_back(p == "..." ? "..." : c_type_to_llvm(p));
+            cur.clear();
+        } else {
+            cur += c;
+        }
+    }
+    if (!cur.empty()) {
+        string p = trim_str(cur);
+        params.push_back(p == "..." ? "..." : c_type_to_llvm(p));
+    }
+    return {ret_llvm, params};
+}
+
+// Strip ANSI escape codes from a string.
+static string strip_ansi(const string& s) {
+    string out;
+    bool esc = false;
+    for (char c : s) {
+        if (c == '\033') { esc = true; continue; }
+        if (esc) { if (c == 'm') esc = false; continue; }
+        out += c;
+    }
+    return out;
+}
+
+// Run `clang -Xclang -ast-dump -fsyntax-only` on a C header and return
+// a map of public function name → CImportedFunc.
+static std::map<string, CImportedFunc> parse_c_header_funcs(const string& header_path) {
+    std::map<string, CImportedFunc> result;
+
+    // Write a small C file that includes the header
+    const char* tmp_c = "/tmp/_dorothy_hdr_import.c";
+    {
+        FILE* f = fopen(tmp_c, "w");
+        if (!f) return result;
+        if (header_path.find('/') != string::npos || header_path[0] == '.')
+            fprintf(f, "#include \"%s\"\n", header_path.c_str());
+        else
+            fprintf(f, "#include <%s>\n", header_path.c_str());
+        fclose(f);
+    }
+
+    string cmd = "clang -Xclang -ast-dump -fsyntax-only " + string(tmp_c) + " 2>/dev/null";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) { remove(tmp_c); return result; }
+
+    char buf[8192];
+    while (fgets(buf, sizeof(buf), pipe)) {
+        string line = strip_ansi(string(buf));
+
+        size_t fd_pos = line.find("FunctionDecl");
+        if (fd_pos == string::npos) continue;
+
+        // Find the type string in single quotes: 'int (const char *, ...)'
+        size_t q1 = line.find('\'', fd_pos);
+        if (q1 == string::npos) continue;
+        size_t q2 = line.find('\'', q1 + 1);
+        if (q2 == string::npos) continue;
+        string type_str = line.substr(q1 + 1, q2 - q1 - 1);
+
+        // Extract function name: last word before the opening quote
+        string before_quote = line.substr(fd_pos, q1 - fd_pos);
+        size_t name_end = before_quote.find_last_not_of(" \t");
+        if (name_end == string::npos) continue;
+        size_t name_start = before_quote.find_last_of(" \t", name_end);
+        if (name_start == string::npos) continue;
+        string func_name = before_quote.substr(name_start + 1, name_end - name_start);
+
+        // Skip internal/compiler-private names
+        if (func_name.empty() || func_name[0] == '_') continue;
+        // Must look like a C identifier
+        bool valid = true;
+        for (char c : func_name)
+            if (!isalnum(c) && c != '_') { valid = false; break; }
+        if (!valid) continue;
+
+        // Only add the first (most general) declaration for each name
+        if (result.count(func_name)) continue;
+
+        auto [ret_llvm, params] = parse_c_func_type(type_str);
+        CImportedFunc info;
+        info.ret_type = ret_llvm;
+        info.is_variadic = false;
+        for (const auto& p : params) {
+            if (p == "...") info.is_variadic = true;
+            else            info.param_types.push_back(p);
+        }
+        result[func_name] = info;
+    }
+
+    pclose(pipe);
+    remove(tmp_c);
+    return result;
+}
+
+// Emit a call to a C-imported function using the raw Expression objects.
+// Applies C default argument promotions for variadic arguments.
+// Returns the i64 result register (or "0" for void).
+static string emitCImportedCall(LLVMGenCtx& ctx, const string& id,
+                                const CImportedFunc& info,
+                                const vector<Expression*>& args) {
+    vector<std::pair<string, string>> final_args;
+
+    for (int i = 0; i < (int)args.size(); i++) {
+        string val = args[i]->llvm_rval(ctx);      // canonical form (i64 or double)
+        VarType canonical = args[i]->llvm_etype(ctx);
+
+        if (i < (int)info.param_types.size()) {
+            // Known parameter: convert to the declared C type
+            const string& ptype = info.param_types[i];
+            if (ptype == "ptr") {
+                // Prefer the raw alloca ptr for array variables (better provenance)
+                const string& varname = args[i]->getVarName();
+                auto it = ctx.array_data_ptrs.find(varname);
+                if (it != ctx.array_data_ptrs.end()) {
+                    final_args.push_back({"ptr", it->second});
+                } else {
+                    string r = ctx.fresh("arg.ptr");
+                    ctx.out << "  " << r << " = inttoptr i64 " << val << " to ptr\n";
+                    final_args.push_back({"ptr", r});
+                }
+            } else if (ptype == "i32") {
+                string r = ctx.fresh("arg.i32");
+                ctx.out << "  " << r << " = trunc i64 " << val << " to i32\n";
+                final_args.push_back({"i32", r});
+            } else {
+                final_args.push_back({ptype, val});
+            }
+        } else {
+            // Variadic argument: apply C default argument promotions.
+            //   float  → double (already double in canonical form)
+            //   char/int/short → int (i32)
+            //   long   → i64
+            //   address-of (&var) → ptr (use raw alloca when available)
+            if (canonical == VarType::DOUBLE) {
+                final_args.push_back({"double", val});
+            } else {
+                // Check if this is an address-of expression pointing to an array
+                // or a scalar variable: prefer passing as ptr for better provenance
+                auto* addr_expr = dynamic_cast<Address*>(args[i]);
+                if (addr_expr) {
+                    // &expr: pass as ptr using llvm_lval for provenance safety
+                    string ptr_reg = addr_expr->llvm_ptr(ctx);
+                    if (!ptr_reg.empty()) {
+                        final_args.push_back({"ptr", ptr_reg});
+                    } else {
+                        // Fallback: inttoptr (loses provenance)
+                        string r = ctx.fresh("va.ptr");
+                        ctx.out << "  " << r << " = inttoptr i64 " << val << " to ptr\n";
+                        final_args.push_back({"ptr", r});
+                    }
+                } else {
+                    VarType declared = args[i]->llvm_declared_type(ctx);
+                    if (declared == VarType::LONG) {
+                        // Explicitly long — keep as i64
+                        final_args.push_back({"i64", val});
+                    } else {
+                        // char/int/literal integer → promote to i32
+                        string r = ctx.fresh("va.i32");
+                        ctx.out << "  " << r << " = trunc i64 " << val << " to i32\n";
+                        final_args.push_back({"i32", r});
+                    }
+                }
+            }
+        }
+    }
+
+    const string& ret = info.ret_type;
+    string tmp = (ret != "void") ? ctx.fresh("call.c") : "";
+
+    // Build the explicit function type annotation required for correct AArch64 ABI.
+    // Without it, variadic calls misbehave on macOS ARM64.
+    string fn_type = ret + " (";
+    for (int i = 0; i < (int)info.param_types.size(); i++) {
+        if (i > 0) fn_type += ", ";
+        fn_type += info.param_types[i];
+    }
+    if (info.is_variadic) {
+        if (!info.param_types.empty()) fn_type += ", ";
+        fn_type += "...";
+    }
+    fn_type += ")";
+
+    ctx.out << "  ";
+    if (ret != "void") ctx.out << tmp << " = ";
+    ctx.out << "call " << fn_type << " @" << id << "(";
+    for (int i = 0; i < (int)final_args.size(); i++) {
+        if (i > 0) ctx.out << ", ";
+        ctx.out << final_args[i].first << " " << final_args[i].second;
+    }
+    ctx.out << ")\n";
+
+    if (ret == "void")   return "0";
+    if (ret == "i32") {
+        string r = ctx.fresh("sext");
+        ctx.out << "  " << r << " = sext i32 " << tmp << " to i64\n";
+        return r;
+    }
+    if (ret == "ptr") {
+        string r = ctx.fresh("ptrtoint");
+        ctx.out << "  " << r << " = ptrtoint ptr " << tmp << " to i64\n";
+        return r;
+    }
+    if (ret == "float" || ret == "double") {
+        string r = ctx.fresh("fptosi");
+        ctx.out << "  " << r << " = fptosi " << ret << " " << tmp << " to i64\n";
+        return r;
+    }
+    return tmp;  // i64
+}
 
 static std::vector<std::pair<string, string>>
 prepareCallArgs(LLVMGenCtx&, const string&, const vector<Expression*>&);
@@ -188,6 +459,32 @@ void DeclVar::llvm_emit(LLVMGenCtx& ctx) {
 // ===== InitializedDeclVar =====
 
 void InitializedDeclVar::llvm_emit(LLVMGenCtx& ctx) {
+    // ===== Type inference: resolve INFERRED before allocating =====
+    if (_type == VarType::INFERRED) {
+        // Struct-returning function call: var p = makePoint();
+        auto* cfe = dynamic_cast<CallFuncExp*>(_init);
+        if (cfe && ctx.func_return_struct.count(cfe->getId())) {
+            _type = VarType::STRUCT;
+            _struct_name = ctx.func_return_struct[cfe->getId()];
+        }
+        // Variable holding a struct: var p2 = p1;
+        else if (auto* var_expr = dynamic_cast<Variable*>(_init)) {
+            auto sit = ctx.struct_var_types.find(var_expr->getVarName());
+            if (sit != ctx.struct_var_types.end()) {
+                _type = VarType::STRUCT;
+                _struct_name = sit->second;
+            } else {
+                // Use canonical type: LONG for integers, DOUBLE for floats
+                _type = _init->llvm_etype(ctx);
+            }
+        }
+        // Scalar expression: integer → LONG, float → DOUBLE
+        else {
+            _type = _init->llvm_etype(ctx);
+        }
+    }
+    // ===== End type inference =====
+
     DeclVar::llvm_emit(ctx);  // alloca + zero-init + type/const tracking
 
     if (_type == VarType::STRUCT) {
@@ -328,12 +625,14 @@ void DeclArrayVar::llvm_emit(LLVMGenCtx& ctx) {
     string data = "%" + _id + ".data." + to_string(n);
     string base = "%" + _id + ".base." + to_string(n);
     string ptr = "%" + _id + ".addr." + to_string(n);
-    ctx.out << "  " << data << " = alloca " << tstr << ", i64 " << _num << "\n";
+    // Use typed array alloca [N x T] for correct AArch64 ABI handling.
+    ctx.out << "  " << data << " = alloca [" << _num << " x " << tstr << "]\n";
     ctx.out << "  " << base << " = ptrtoint ptr " << data << " to i64\n";
     ctx.out << "  " << ptr << " = alloca i64\n";
     ctx.out << "  store i64 " << base << ", ptr " << ptr << "\n";
     ctx.vars[_id] = ptr;
     ctx.var_types[_id] = VarType::LONG;  // pointer (address) is i64
+    ctx.array_data_ptrs[_id] = data;     // raw alloca ptr for provenance-safe access
 }
 
 // ===== InitializedDeclArrayVar =====
@@ -341,17 +640,17 @@ void DeclArrayVar::llvm_emit(LLVMGenCtx& ctx) {
 void InitializedDeclArrayVar::llvm_emit(LLVMGenCtx& ctx) {
     DeclArrayVar::llvm_emit(ctx);
 
-    string base = ctx.fresh(_id + ".init.base");
-    ctx.out << "  " << base << " = load i64, ptr " << ctx.vars[_id] << "\n";
-    string arr_ptr = ctx.fresh(_id + ".init.ptr");
-    ctx.out << "  " << arr_ptr << " = inttoptr i64 " << base << " to ptr\n";
+    // Use the raw alloca pointer directly to preserve LLVM pointer provenance.
+    string arr_ptr = ctx.array_data_ptrs[_id];
 
+    string tstr = llvm_type_str(_type);
     for (int i = 0; i < (int)_values.size(); i++) {
         string val = _values[i]->llvm_rval(ctx);
         string elem = ctx.fresh("elem");
-        ctx.out << "  " << elem << " = getelementptr i64, ptr " << arr_ptr
+        ctx.out << "  " << elem << " = getelementptr " << tstr << ", ptr " << arr_ptr
                 << ", i64 " << i << "\n";
-        ctx.out << "  store i64 " << val << ", ptr " << elem << "\n";
+        string store_val = llvm_coerce(ctx, val, VarType::LONG, _type);
+        ctx.out << "  store " << tstr << " " << store_val << ", ptr " << elem << "\n";
     }
 }
 
@@ -550,10 +849,16 @@ prepareCallArgs(LLVMGenCtx& ctx, const std::string& id,
 void CallFuncSt::llvm_emit(LLVMGenCtx& ctx) {
     if (ctx.func_return_struct.count(_id))
         throw CompileError(("struct-returning function result must be assigned to a struct variable: " + _id).c_str());
-    string reg = ctx.fresh("call");
-    bool is_imported = ctx.defined_funcs.find(_id) == ctx.defined_funcs.end();
+    // C-imported function: use correct signature with C arg promotions
+    auto cit = ctx.c_imported_funcs.find(_id);
+    if (cit != ctx.c_imported_funcs.end()) {
+        emitCImportedCall(ctx, _id, cit->second, _args);
+        return;
+    }
     // Prepare all args (emit conversions) before the call instruction
     auto prepared = prepareCallArgs(ctx, _id, _args);
+    string reg = ctx.fresh("call");
+    bool is_imported = ctx.defined_funcs.find(_id) == ctx.defined_funcs.end();
     if (is_imported) {
         ctx.out << "  " << reg << " = call i64 (...) @" << _id << "(";
     } else {
@@ -676,9 +981,31 @@ void Function::llvm_emit(LLVMGenCtx& ctx) {
     ctx.out << "}\n\n";
 }
 
+// ===== ImportCHeader =====
+
+void ImportCHeader::llvm_emit(LLVMGenCtx& ctx) {
+    auto funcs = parse_c_header_funcs(_header_path);
+    for (auto& [name, info] : funcs) {
+        ctx.c_imported_funcs[name] = info;
+        ctx.out << "declare " << info.ret_type << " @" << name << "(";
+        for (int i = 0; i < (int)info.param_types.size(); i++) {
+            if (i > 0) ctx.out << ", ";
+            ctx.out << info.param_types[i];
+        }
+        if (info.is_variadic) {
+            if (!info.param_types.empty()) ctx.out << ", ";
+            ctx.out << "...";
+        }
+        ctx.out << ")\n";
+    }
+    ctx.out << "\n";
+}
+
 // ===== ImportFunction =====
 
 void ImportFunction::llvm_emit(LLVMGenCtx& ctx) {
+    // Skip if already declared via a C header import
+    if (ctx.c_imported_funcs.count(_id)) return;
     ctx.out << "declare i64 @" << _id << "(...)\n\n";
 }
 
@@ -939,10 +1266,14 @@ string Access::llvm_lval(LLVMGenCtx& ctx) {
 string CallFuncExp::llvm_rval(LLVMGenCtx& ctx) {
     if (ctx.func_return_struct.count(_id))
         throw CompileError(("struct-returning function result must be assigned to a struct variable: " + _id).c_str());
-    string reg = ctx.fresh("call");
-    bool is_imported = ctx.defined_funcs.find(_id) == ctx.defined_funcs.end();
+    // C-imported function: use correct signature with C arg promotions
+    auto cit = ctx.c_imported_funcs.find(_id);
+    if (cit != ctx.c_imported_funcs.end())
+        return emitCImportedCall(ctx, _id, cit->second, _args);
     // Prepare all args (emit conversions) before the call instruction
     auto prepared = prepareCallArgs(ctx, _id, _args);
+    string reg = ctx.fresh("call");
+    bool is_imported = ctx.defined_funcs.find(_id) == ctx.defined_funcs.end();
     if (is_imported) {
         ctx.out << "  " << reg << " = call i64 (...) @" << _id << "(";
     } else {

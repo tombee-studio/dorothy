@@ -3,21 +3,24 @@
 #include <string>
 
 enum class VarType {
-    CHAR,    // i8  - 1 byte integer
-    INT,     // i32 - 4 byte integer
-    LONG,    // i64 - 8 byte integer
-    FLOAT,   // float  - 4 byte floating point
-    DOUBLE,  // double - 8 byte floating point
-    STRUCT,  // user-defined struct type
+    CHAR,     // i8  - 1 byte integer
+    INT,      // i32 - 4 byte integer
+    LONG,     // i64 - 8 byte integer
+    FLOAT,    // float  - 4 byte floating point
+    DOUBLE,   // double - 8 byte floating point
+    STRUCT,   // user-defined struct type
+    INFERRED, // placeholder for type inference; resolved in llvm_emit
 };
 
 inline std::string llvm_type_str(VarType t) {
     switch (t) {
-        case VarType::CHAR:   return "i8";
-        case VarType::INT:    return "i32";
-        case VarType::LONG:   return "i64";
-        case VarType::FLOAT:  return "float";
-        case VarType::DOUBLE: return "double";
+        case VarType::CHAR:     return "i8";
+        case VarType::INT:      return "i32";
+        case VarType::LONG:     return "i64";
+        case VarType::FLOAT:    return "float";
+        case VarType::DOUBLE:   return "double";
+        case VarType::STRUCT:   return "ptr";
+        case VarType::INFERRED: return "i64";
     }
     return "i64";
 }

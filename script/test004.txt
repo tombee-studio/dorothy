@@ -1,8 +1,0 @@
-import print;
-import nl;
-
-func main() {
-    print(11);
-    nl();
-    return 0;
-}
