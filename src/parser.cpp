@@ -98,11 +98,21 @@ Function *Parser::parse_function(vector<Token> &tokens) {
     if (consume(tokens, Token::KW_FUNC).type == Token::NONE) {
         if (consume(tokens, Token::KW_IMPORT).type == Token::NONE) {
             throw ParseError(format("position: %d", _pos), tokens[_pos]);
-        } else {
+        }
+        // C header import: import "stdio.h";
+        if (tokens[_pos].type == Token::TK_RAWSTRING) {
+            string header_path = tokens[_pos].id;
+            _pos++;
+            if (consume(tokens, (Token::Type)';').type == Token::NONE)
+                throw ParseError("expected ';' after header path", tokens[_pos]);
+            return new ImportCHeader(header_path);
+        }
+        // Dorothy-style import: import funcname;
+        {
             Token id_token = consume(tokens, Token::TK_ID);
             vector<DeclVar *> args;
             if (id_token.type == Token::NONE)
-                throw ParseError("expected ID", tokens[_pos]);
+                throw ParseError("expected ID or header string", tokens[_pos]);
             if (consume(tokens, (Token::Type)';').type != Token::NONE) {
                 return new ImportFunction(id_token.id, args);
             } else {
@@ -116,7 +126,24 @@ Function *Parser::parse_function(vector<Token> &tokens) {
     auto declargs = parse_declargs(tokens);
     VarType ret_type = VarType::LONG;
     string ret_struct_name = "";
-    if (consume(tokens, Token::TK_ARROW).type != Token::NONE) {
+    bool has_explicit_ret_type = false;
+    if (consume(tokens, (Token::Type)':').type != Token::NONE) {
+        // func name(): type {}
+        has_explicit_ret_type = true;
+        if (is_type_keyword(tokens[_pos].type)) {
+            ret_type = token_to_vartype(tokens[_pos].type);
+            _pos++;
+        } else if (tokens[_pos].type == Token::TK_ID && _struct_defs.count(tokens[_pos].id)) {
+            ret_type = VarType::STRUCT;
+            ret_struct_name = tokens[_pos].id;
+            _pos++;
+        } else {
+            throw ParseError("expected type keyword after ':' in function return type",
+                             tokens[_pos]);
+        }
+    } else if (consume(tokens, Token::TK_ARROW).type != Token::NONE) {
+        // func name() -> StructName {} (legacy struct return syntax)
+        has_explicit_ret_type = true;
         Token struct_tok = consume(tokens, Token::TK_ID);
         if (struct_tok.type == Token::NONE)
             throw ParseError("expected struct name after '->'", tokens[_pos]);
@@ -126,7 +153,8 @@ Function *Parser::parse_function(vector<Token> &tokens) {
         ret_struct_name = struct_tok.id;
     }
     auto block = parse_block(tokens);
-    return new Function(id_token.id, declargs, block, ret_type, ret_struct_name);
+    return new Function(id_token.id, declargs, block, ret_type, ret_struct_name,
+                        has_explicit_ret_type);
 }
 
 vector<DeclVar *> Parser::parse_declargs(vector<Token> &tokens) {
@@ -194,6 +222,15 @@ DeclVar *Parser::parse_declvar(vector<Token> &tokens) {
 }
 
 vector<Expression *> Parser::parse_array_initializer(vector<Token> &tokens) {
+    // String literal shorthand: "hello" expands to {'h','e','l','l','o',0}
+    if (tokens[_pos].type == Token::TK_RAWSTRING) {
+        string s = tokens[_pos].id;
+        _pos++;
+        vector<Expression *> exprs;
+        for (unsigned char c : s) exprs.push_back(new IntExp(c));
+        exprs.push_back(new IntExp(0));
+        return exprs;
+    }
     if (consume(tokens, (Token::Type)'{').type == Token::NONE) {
         throw ParseError("expected '{'", tokens[_pos]);
     }
@@ -241,8 +278,45 @@ Statement *Parser::parse_declvarst(vector<Token> &tokens) {
     Token id_token = consume(tokens, Token::TK_ID);
     if (id_token.type == Token::NONE)
         throw ParseError(format("expected identifier at %d", _pos), tokens[_pos]);
+
+    // ===== Type inference: var/let x = expr; (no ':' type annotation) =====
+    if (tokens[_pos].type == (Token::Type)'=') {
+        _pos++;  // consume '='
+
+        // String literal → char[N] array (size = len + 1 for null terminator)
+        if (tokens[_pos].type == Token::TK_RAWSTRING) {
+            string s = tokens[_pos].id;
+            _pos++;
+            if (consume(tokens, (Token::Type)';').type == Token::NONE)
+                throw ParseError("expected ';'", tokens[_pos]);
+            int sz = (int)s.size() + 1;
+            vector<Expression *> vals;
+            for (unsigned char c : s) vals.push_back(new IntExp(c));
+            vals.push_back(new IntExp(0));
+            return new DeclVarSt(
+                new InitializedDeclArrayVar(id_token.id, sz, vals, VarType::CHAR, is_const));
+        }
+
+        Expression *init = parse_expression(tokens);
+        if (!init)
+            throw ParseError("expected expression after '='", tokens[_pos]);
+        if (consume(tokens, (Token::Type)';').type == Token::NONE)
+            throw ParseError("expected ';'", tokens[_pos]);
+
+        auto* si = dynamic_cast<StructInit*>(init);
+        if (si) {
+            return new DeclVarSt(new InitializedDeclVar(
+                id_token.id, VarType::STRUCT, is_const, init, si->getStructName()));
+        }
+
+        // All other expressions: defer type resolution to llvm_emit via INFERRED
+        return new DeclVarSt(
+            new InitializedDeclVar(id_token.id, VarType::INFERRED, is_const, init));
+    }
+    // ===== End type inference =====
+
     if (consume(tokens, (Token::Type)':').type == Token::NONE)
-        throw ParseError("expected ':' after variable name", tokens[_pos]);
+        throw ParseError("expected ':' or '=' after variable name", tokens[_pos]);
 
     // Struct type: var name: StructName = StructName(field=val, ...);
     if (tokens[_pos].type == Token::TK_ID && _struct_defs.count(tokens[_pos].id)) {

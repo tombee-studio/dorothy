@@ -14,6 +14,13 @@ struct ParamInfo {
     std::string struct_name;  // non-empty when type == VarType::STRUCT
 };
 
+// Signature info for a C function imported via a C header file.
+struct CImportedFunc {
+    std::string ret_type;            // LLVM return type: "i32", "i64", "ptr", "void", etc.
+    std::vector<std::string> param_types;  // LLVM types for known (non-variadic) params
+    bool is_variadic;
+};
+
 struct LLVMGenCtx {
     std::ostream& out;
     int counter;
@@ -35,6 +42,10 @@ struct LLVMGenCtx {
     std::string current_ret_struct;            // struct name if current func returns struct
     // nested struct support: var -> (dotted-path -> struct_name)
     std::map<std::string, std::map<std::string, std::string>> struct_subfield_types;
+    // C header import: function name -> signature (populated by ImportCHeader::llvm_emit)
+    std::map<std::string, CImportedFunc> c_imported_funcs;
+    // Array variable name -> raw alloca ptr register (for provenance-safe pointer passing)
+    std::map<std::string, std::string> array_data_ptrs;
 
     explicit LLVMGenCtx(std::ostream& o)
         : out(o), counter(0), terminated(false) {}
