@@ -1,0 +1,103 @@
+#pragma once
+#include <string>
+#include <vector>
+#include <map>
+#include <functional>
+#include <memory>
+#include <stdexcept>
+
+using namespace std;
+
+struct ASTNode;
+struct FuncParam;
+struct StructMethod;
+struct TypeInfo;
+
+struct ReturnException {
+    int value;
+    ReturnException(int v) : value(v) {}
+};
+
+struct StructFieldInfo {
+    string name;
+    int offset;
+};
+
+struct StructTypeInfo {
+    string name;
+    vector<StructFieldInfo> fields;
+    vector<FuncParam> constructor_params;
+    ASTNode* constructor_body;
+    vector<StructMethod> methods;
+};
+
+struct StructInstance {
+    string type_name;
+    map<string, int> fields;
+};
+
+struct Variable {
+    int value;
+    bool is_struct;
+    StructInstance struct_instance;
+    
+    Variable() : value(0), is_struct(false) {}
+    Variable(int v) : value(v), is_struct(false) {}
+};
+
+struct FuncDef {
+    string name;
+    vector<FuncParam> params;
+    ASTNode* body;
+};
+
+struct Context {
+    vector<map<string, Variable>> scopes;
+    map<string, FuncDef> functions;
+    map<string, StructTypeInfo> struct_types;
+    map<string, function<int(vector<int>)>> builtins;
+    
+    // For method calls - pointer to "this" struct instance
+    StructInstance* current_this = nullptr;
+    
+    void push_scope() {
+        scopes.push_back({});
+    }
+    
+    void pop_scope() {
+        if (!scopes.empty())
+            scopes.pop_back();
+    }
+    
+    bool has_var(const string& name) {
+        for (int i = scopes.size() - 1; i >= 0; i--) {
+            if (scopes[i].count(name)) return true;
+        }
+        return false;
+    }
+    
+    Variable& get_var(const string& name) {
+        for (int i = scopes.size() - 1; i >= 0; i--) {
+            if (scopes[i].count(name)) return scopes[i][name];
+        }
+        throw runtime_error("Undefined variable: " + name);
+    }
+    
+    void set_var(const string& name, Variable v) {
+        for (int i = scopes.size() - 1; i >= 0; i--) {
+            if (scopes[i].count(name)) {
+                scopes[i][name] = v;
+                return;
+            }
+        }
+        if (!scopes.empty())
+            scopes.back()[name] = v;
+        else
+            throw runtime_error("No scope available");
+    }
+    
+    void declare_var(const string& name, Variable v = Variable()) {
+        if (scopes.empty()) push_scope();
+        scopes.back()[name] = v;
+    }
+};

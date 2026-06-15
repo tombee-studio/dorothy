@@ -1,113 +1,238 @@
 #pragma once
 #include <string>
 #include <vector>
-#include <memory>
 #include <map>
+#include <functional>
+#include <memory>
 
-// Forward declarations
-struct ASTNode;
-struct TypeInfo;
+using namespace std;
 
-// Type system
-enum class BaseType {
+struct Context;
+struct Token;
+
+enum class NodeType {
     INT,
-    CHAR,
-    LONG,
     FLOAT,
     DOUBLE,
+    CHAR,
+    LONG,
     VOID,
+    ARRAY,
     STRUCT,
     POINTER
 };
 
 struct TypeInfo {
-    BaseType base;
-    std::string structName;  // for STRUCT type
-    int pointerDepth = 0;
-    bool isArray = false;
-    int arraySize = 0;
-
-    TypeInfo() : base(BaseType::INT), pointerDepth(0), isArray(false), arraySize(0) {}
-    TypeInfo(BaseType b) : base(b), pointerDepth(0), isArray(false), arraySize(0) {}
-    TypeInfo(const std::string& name) : base(BaseType::STRUCT), structName(name), pointerDepth(0), isArray(false), arraySize(0) {}
-
-    bool isVoid() const { return base == BaseType::VOID; }
-    bool isStruct() const { return base == BaseType::STRUCT; }
-    bool isPointer() const { return pointerDepth > 0; }
-};
-
-// AST Node types
-enum class NodeType {
-    PROGRAM,
-    FUNC_DEF,
-    STRUCT_DEF,
-    CONSTRUCTOR_DEF,
-    METHOD_DEF,
-    IMPORT,
-    BLOCK,
-    VAR_DECL,
-    ASSIGN,
-    IF,
-    WHILE,
-    FOR,
-    RETURN,
-    EXPR_STMT,
-    // Expressions
-    INT_LITERAL,
-    FLOAT_LITERAL,
-    STRING_LITERAL,
-    IDENT,
-    BINARY_OP,
-    UNARY_OP,
-    CALL,
-    METHOD_CALL,
-    MEMBER_ACCESS,
-    INDEX,
-    THIS,
-    STRUCT_INIT,
-};
-
-struct Param {
-    TypeInfo type;
-    std::string name;
+    NodeType type;
+    string struct_name;
+    int array_size;
+    bool is_pointer;
+    
+    TypeInfo() : type(NodeType::INT), array_size(0), is_pointer(false) {}
+    TypeInfo(NodeType t) : type(t), array_size(0), is_pointer(false) {}
 };
 
 struct ASTNode {
-    NodeType type;
-    
-    // Literals
-    int ival;
-    double fval;
-    std::string sval;
-    
-    // Type info
-    TypeInfo typeInfo;
-    TypeInfo returnType;
-    
-    // Operator
-    std::string op;
-    
-    // Children
-    std::vector<std::shared_ptr<ASTNode>> children;
-    
-    // Function/method params
-    std::vector<Param> params;
-    
-    // For struct definitions
-    std::vector<Param> members;
-    // methods stored in children with NodeType::METHOD_DEF or CONSTRUCTOR_DEF
-    
-    ASTNode() : ival(0), fval(0.0) {}
+    virtual ~ASTNode() = default;
+    virtual int evaluate(Context& ctx) = 0;
 };
 
-using ASTNodePtr = std::shared_ptr<ASTNode>;
+struct ProgramNode : ASTNode {
+    vector<ASTNode*> statements;
+    int evaluate(Context& ctx) override;
+};
 
-// Helper constructors
-ASTNodePtr makeNode(NodeType type);
-ASTNodePtr makeIntLiteral(int val);
-ASTNodePtr makeFloatLiteral(double val);
-ASTNodePtr makeStringLiteral(const std::string& val);
-ASTNodePtr makeIdent(const std::string& name);
-ASTNodePtr makeBinaryOp(const std::string& op, ASTNodePtr left, ASTNodePtr right);
-ASTNodePtr makeUnaryOp(const std::string& op, ASTNodePtr operand);
-ASTNodePtr makeThis();
+struct ImportNode : ASTNode {
+    string name;
+    ImportNode(string name) : name(name) {}
+    int evaluate(Context& ctx) override;
+};
+
+struct IntNode : ASTNode {
+    int value;
+    IntNode(int value) : value(value) {}
+    int evaluate(Context& ctx) override;
+};
+
+struct FloatNode : ASTNode {
+    float value;
+    FloatNode(float value) : value(value) {}
+    int evaluate(Context& ctx) override;
+};
+
+struct DoubleNode : ASTNode {
+    double value;
+    DoubleNode(double value) : value(value) {}
+    int evaluate(Context& ctx) override;
+};
+
+struct BinaryOpNode : ASTNode {
+    string op;
+    ASTNode* left;
+    ASTNode* right;
+    BinaryOpNode(string op, ASTNode* left, ASTNode* right)
+        : op(op), left(left), right(right) {}
+    int evaluate(Context& ctx) override;
+};
+
+struct AssignNode : ASTNode {
+    ASTNode* left;
+    ASTNode* right;
+    AssignNode(ASTNode* left, ASTNode* right)
+        : left(left), right(right) {}
+    int evaluate(Context& ctx) override;
+};
+
+struct VarNode : ASTNode {
+    string name;
+    VarNode(string name) : name(name) {}
+    int evaluate(Context& ctx) override;
+};
+
+struct VarDeclNode : ASTNode {
+    string name;
+    TypeInfo type_info;
+    ASTNode* init_expr;
+    VarDeclNode(string name, TypeInfo ti, ASTNode* init = nullptr)
+        : name(name), type_info(ti), init_expr(init) {}
+    int evaluate(Context& ctx) override;
+};
+
+struct ArrayAccessNode : ASTNode {
+    string name;
+    ASTNode* index;
+    ArrayAccessNode(string name, ASTNode* index)
+        : name(name), index(index) {}
+    int evaluate(Context& ctx) override;
+};
+
+struct MemberAccessNode : ASTNode {
+    ASTNode* object;
+    string member;
+    MemberAccessNode(ASTNode* object, string member)
+        : object(object), member(member) {}
+    int evaluate(Context& ctx) override;
+};
+
+struct FuncCallNode : ASTNode {
+    string name;
+    vector<ASTNode*> args;
+    FuncCallNode(string name, vector<ASTNode*> args)
+        : name(name), args(args) {}
+    int evaluate(Context& ctx) override;
+};
+
+struct MethodCallNode : ASTNode {
+    ASTNode* object;
+    string method_name;
+    vector<ASTNode*> args;
+    MethodCallNode(ASTNode* object, string method_name, vector<ASTNode*> args)
+        : object(object), method_name(method_name), args(args) {}
+    int evaluate(Context& ctx) override;
+};
+
+struct BlockNode : ASTNode {
+    vector<ASTNode*> statements;
+    int evaluate(Context& ctx) override;
+};
+
+struct ReturnNode : ASTNode {
+    ASTNode* expr;
+    ReturnNode(ASTNode* expr) : expr(expr) {}
+    int evaluate(Context& ctx) override;
+};
+
+struct IfNode : ASTNode {
+    ASTNode* condition;
+    ASTNode* then_block;
+    ASTNode* else_block;
+    IfNode(ASTNode* condition, ASTNode* then_block, ASTNode* else_block = nullptr)
+        : condition(condition), then_block(then_block), else_block(else_block) {}
+    int evaluate(Context& ctx) override;
+};
+
+struct WhileNode : ASTNode {
+    ASTNode* condition;
+    ASTNode* body;
+    WhileNode(ASTNode* condition, ASTNode* body)
+        : condition(condition), body(body) {}
+    int evaluate(Context& ctx) override;
+};
+
+struct ForNode : ASTNode {
+    ASTNode* init;
+    ASTNode* condition;
+    ASTNode* update;
+    ASTNode* body;
+    ForNode(ASTNode* init, ASTNode* condition, ASTNode* update, ASTNode* body)
+        : init(init), condition(condition), update(update), body(body) {}
+    int evaluate(Context& ctx) override;
+};
+
+struct FuncParam {
+    string name;
+    TypeInfo type_info;
+};
+
+struct FuncDefNode : ASTNode {
+    string name;
+    vector<FuncParam> params;
+    TypeInfo return_type;
+    ASTNode* body;
+    FuncDefNode(string name, vector<FuncParam> params, TypeInfo return_type, ASTNode* body)
+        : name(name), params(params), return_type(return_type), body(body) {}
+    int evaluate(Context& ctx) override;
+};
+
+struct StructMethod {
+    string name;
+    vector<FuncParam> params;
+    TypeInfo return_type;
+    ASTNode* body;
+};
+
+struct StructDefNode : ASTNode {
+    string name;
+    vector<pair<string, TypeInfo>> fields;
+    vector<FuncParam> constructor_params;
+    ASTNode* constructor_body;
+    vector<StructMethod> methods;
+    StructDefNode(string name, 
+                  vector<pair<string, TypeInfo>> fields,
+                  vector<FuncParam> constructor_params,
+                  ASTNode* constructor_body,
+                  vector<StructMethod> methods = {})
+        : name(name), fields(fields), 
+          constructor_params(constructor_params), 
+          constructor_body(constructor_body),
+          methods(methods) {}
+    int evaluate(Context& ctx) override;
+};
+
+struct StructCreateNode : ASTNode {
+    string struct_name;
+    vector<ASTNode*> args;
+    StructCreateNode(string struct_name, vector<ASTNode*> args)
+        : struct_name(struct_name), args(args) {}
+    int evaluate(Context& ctx) override;
+};
+
+struct AddressOfNode : ASTNode {
+    ASTNode* expr;
+    AddressOfNode(ASTNode* expr) : expr(expr) {}
+    int evaluate(Context& ctx) override;
+};
+
+struct DereferenceNode : ASTNode {
+    ASTNode* expr;
+    DereferenceNode(ASTNode* expr) : expr(expr) {}
+    int evaluate(Context& ctx) override;
+};
+
+struct DerefAssignNode : ASTNode {
+    ASTNode* ptr_expr;
+    ASTNode* value_expr;
+    DerefAssignNode(ASTNode* ptr_expr, ASTNode* value_expr)
+        : ptr_expr(ptr_expr), value_expr(value_expr) {}
+    int evaluate(Context& ctx) override;
+};

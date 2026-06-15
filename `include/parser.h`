@@ -2,59 +2,45 @@
 #include "lexer.h"
 #include "ast.h"
 #include <vector>
-#include <stdexcept>
 
 class Parser {
 public:
-    Parser(const std::vector<Token>& tokens);
-    ASTNodePtr parse();
-
+    Parser(vector<Token> tokens);
+    ASTNode* parse();
+    
 private:
-    std::vector<Token> tokens;
+    vector<Token> tokens;
     int pos;
-
-    Token current();
-    Token peek(int offset = 1);
+    
+    Token& current();
+    Token& peek(int offset = 1);
     Token consume();
     Token expect(TokenType type);
     bool check(TokenType type);
     bool match(TokenType type);
-
-    // Top-level
-    ASTNodePtr parseProgram();
-    ASTNodePtr parseTopLevel();
-    ASTNodePtr parseFuncDef();
-    ASTNodePtr parseStructDef();
-    ASTNodePtr parseImport();
-
-    // Struct internals
-    ASTNodePtr parseConstructorDef(const std::string& structName);
-    ASTNodePtr parseMethodDef(const std::string& structName);
-
-    // Statements
-    ASTNodePtr parseBlock();
-    ASTNodePtr parseStatement();
-    ASTNodePtr parseVarDecl();
-    ASTNodePtr parseIfStmt();
-    ASTNodePtr parseWhileStmt();
-    ASTNodePtr parseForStmt();
-    ASTNodePtr parseReturnStmt();
-    ASTNodePtr parseExprStmt();
-
-    // Expressions
-    ASTNodePtr parseExpr();
-    ASTNodePtr parseAssign();
-    ASTNodePtr parseComparison();
-    ASTNodePtr parseAddSub();
-    ASTNodePtr parseMulDiv();
-    ASTNodePtr parseUnary();
-    ASTNodePtr parsePostfix();
-    ASTNodePtr parsePrimary();
-
-    // Type parsing
-    TypeInfo parseType();
-    TypeInfo parseTypeAnnotation(); // parses ": type"
-    std::vector<Param> parseParams();
-    std::vector<Param> parseStructMembers(const std::string& structName,
-                                           std::vector<ASTNodePtr>& methods);
+    
+    ASTNode* parse_program();
+    ASTNode* parse_top_level();
+    ASTNode* parse_import();
+    ASTNode* parse_func_def();
+    ASTNode* parse_struct_def();
+    ASTNode* parse_statement();
+    ASTNode* parse_var_decl();
+    ASTNode* parse_block();
+    ASTNode* parse_return();
+    ASTNode* parse_if();
+    ASTNode* parse_while();
+    ASTNode* parse_for();
+    ASTNode* parse_expression_statement();
+    ASTNode* parse_expression();
+    ASTNode* parse_assign();
+    ASTNode* parse_comparison();
+    ASTNode* parse_add_sub();
+    ASTNode* parse_mul_div();
+    ASTNode* parse_unary();
+    ASTNode* parse_postfix();
+    ASTNode* parse_primary();
+    
+    TypeInfo parse_type();
+    vector<FuncParam> parse_params();
 };
