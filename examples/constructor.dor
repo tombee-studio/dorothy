@@ -1,0 +1,16 @@
+struct Dog {
+    name: string;
+
+    constructor(name: string) {
+        this.name = name;
+    }
+
+    func bark() {
+        print(this.name);
+    }
+}
+
+func main() {
+    let dog = Dog("Pochi");
+    dog.bark();
+}
