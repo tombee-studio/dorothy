@@ -1,0 +1,18 @@
+struct Dog {
+    string name;
+
+    constructor(string name) {
+        this.name = name;
+    }
+
+    func bark() {
+        print("Woof! I am ");
+        print(this.name);
+        print("\n");
+    }
+}
+
+func main() {
+    Dog dog = Dog("Pochi");
+    dog.bark();
+}
