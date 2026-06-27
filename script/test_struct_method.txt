@@ -1,0 +1,17 @@
+struct Dog {
+    int age;
+
+    constructor(int age) {
+        this.age = age;
+    }
+
+    func bark() {
+        return this.age;
+    }
+}
+
+func main() {
+    Dog dog;
+    dog = Dog(3);
+    return dog.bark();   // 3
+}
