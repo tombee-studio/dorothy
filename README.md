@@ -12,4 +12,3 @@ A simple programming language that compiles to a custom bytecode VM or LLVM IR.
 
 Clone this repository and run:
 
-
