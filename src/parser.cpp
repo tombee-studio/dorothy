@@ -1,5 +1,9 @@
-/* Copyright 2022(Tomoya Bansho@tomoya-kwansei) */
+#include <fstream>
+#include <filesystem>
+#include "../include/lexer.hpp"
 #include "../include/parser.hpp"
+
+namespace fs = std::filesystem;
 
 static bool is_type_keyword(Token::Type t) {
     return t == Token::KW_INT || t == Token::KW_CHAR || t == Token::KW_LONG ||
@@ -17,17 +21,136 @@ static VarType token_to_vartype(Token::Type t) {
     }
 }
 
-vector<Function *> Parser::parse(vector<Token> &tokens) {
+static bool is_dorothy_import(const string &path) {
+    return (path.size() >= 8 && path.substr(path.size() - 8) == ".dorothy");
+}
+
+string Parser::resolve_path(const string &path, const string &base_dir) {
+    fs::path p(path);
+    if (p.is_absolute()) {
+        if (fs::exists(p)) {
+            return fs::weakly_canonical(p).string();
+        }
+        return path;
+    }
+    if (!base_dir.empty()) {
+        fs::path candidate = fs::path(base_dir) / p;
+        if (fs::exists(candidate)) {
+            return fs::weakly_canonical(candidate).string();
+        }
+    }
+    if (fs::exists(p)) {
+        return fs::weakly_canonical(p).string();
+    }
+    if (!base_dir.empty()) {
+        return (fs::path(base_dir) / p).string();
+    }
+    return p.string();
+}
+
+void Parser::import_dorothy_file(const string &file_path, const string &base_dir, Token import_tok) {
+    string resolved = resolve_path(file_path, base_dir);
+    if (!fs::exists(resolved)) {
+        throw ParseError("cannot open file: " + file_path, import_tok);
+    }
+    string canonical_path = fs::weakly_canonical(fs::path(resolved)).string();
+    if (_loaded_files.count(canonical_path)) {
+        // Already loaded, skip to avoid circular/duplicate imports
+        return;
+    }
+    _loaded_files.insert(canonical_path);
+
+    std::ifstream ifs(canonical_path);
+    if (!ifs.is_open()) {
+        throw ParseError("cannot open file: " + file_path, import_tok);
+    }
+    string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+
+    Lexer lexer;
+    auto tokens = lexer.lex(content.c_str());
+
+    string next_base_dir = fs::path(canonical_path).parent_path().string();
+    parse_top_level(tokens, next_base_dir);
+}
+
+void Parser::parse_top_level(vector<Token> &tokens, const string &base_dir) {
+    int saved_pos = _pos;
+    string saved_base_dir = _base_dir;
     _pos = 0;
-    _struct_defs.clear();
-    g_struct_defs.clear();
+    _base_dir = base_dir;
+
     while (consume(tokens, Token::TK_EOF).type == Token::NONE) {
         if (tokens[_pos].type == Token::KW_STRUCT) {
             parse_struct_def(tokens);
+        } else if (tokens[_pos].type == Token::KW_IMPORT &&
+                   _pos + 1 < (int)tokens.size() &&
+                   tokens[_pos + 1].type == Token::TK_RAWSTRING &&
+                   is_dorothy_import(tokens[_pos + 1].id)) {
+            Token import_tok = consume(tokens, Token::KW_IMPORT);
+            Token path_tok = consume(tokens, Token::TK_RAWSTRING);
+            if (consume(tokens, (Token::Type)';').type == Token::NONE) {
+                throw ParseError("expected ';' after import path", tokens[_pos]);
+            }
+            import_dorothy_file(path_tok.id, _base_dir, import_tok);
         } else {
-            _functions.push_back(parse_function(tokens));
+            Function *func = parse_function(tokens);
+            if (!func->isImport()) {
+                const string &name = func->getName();
+                if (_defined_functions.count(name)) {
+                    if (name == "main") {
+                        throw ParseError("multiple definition of 'main' function", tokens[_pos]);
+                    } else {
+                        throw ParseError("multiple definition of function '" + name + "'", tokens[_pos]);
+                    }
+                }
+                _defined_functions.insert(name);
+            }
+            _functions.push_back(func);
         }
     }
+
+    _pos = saved_pos;
+    _base_dir = saved_base_dir;
+}
+
+vector<Function *> Parser::parse(vector<Token> &tokens, const string &base_dir) {
+    _pos = 0;
+    _struct_defs.clear();
+    g_struct_defs.clear();
+    _functions.clear();
+    _defined_functions.clear();
+    _loaded_files.clear();
+    _base_dir = base_dir;
+
+    parse_top_level(tokens, base_dir);
+    return _functions;
+}
+
+vector<Function *> Parser::parse_file(const string &filepath) {
+    fs::path p(filepath);
+    if (!fs::exists(p)) {
+        throw runtime_error("file not found: " + filepath);
+    }
+    string canonical_path = fs::weakly_canonical(p).string();
+    _pos = 0;
+    _struct_defs.clear();
+    g_struct_defs.clear();
+    _functions.clear();
+    _defined_functions.clear();
+    _loaded_files.clear();
+    _loaded_files.insert(canonical_path);
+
+    std::ifstream ifs(canonical_path);
+    if (!ifs.is_open()) {
+        throw runtime_error("cannot open file: " + filepath);
+    }
+    string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+
+    Lexer lexer;
+    auto tokens = lexer.lex(content.c_str());
+
+    string base_dir = p.parent_path().string();
+    parse_top_level(tokens, base_dir);
     return _functions;
 }
 

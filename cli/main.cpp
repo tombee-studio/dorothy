@@ -198,18 +198,14 @@ int main(int argc, char **argv) {
 
     if (input_file == nullptr) return 1;
 
-    string str;
-    ifstream ifs(input_file);
-    while (!ifs.fail()) {
-        string line;
-        getline(ifs, line);
-        str += line;
-    }
-
-    Lexer lexer;
     Parser parser;
-    auto tokens  = lexer.lex(str.c_str());
-    auto program = parser.parse(tokens);
+    vector<Function *> program;
+    try {
+        program = parser.parse_file(input_file);
+    } catch (const std::exception &e) {
+        cerr << "error: " << e.what() << endl;
+        return 1;
+    }
 
     if (target != Target::NONE) {
         string tmp_file = string("/tmp/dorothy_") + file_stem(input_file) + ".ll";

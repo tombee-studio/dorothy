@@ -1,0 +1,23 @@
+import "stdio.h";
+import "math_utils.dorothy";
+
+func main(): int {
+    var v1: Vector2 = Vector2(3, 4);
+    var v2: Vector2 = Vector2(1, 2);
+
+    var sum: Vector2 = add_vec(v1, v2);
+    var scaled: Vector2 = scale_vec(v1, 3);
+    var dot: int = dot_vec(v1, v2);
+
+    var fmt1 = "v1 = (%d, %d), v2 = (%d, %d)\n";
+    var fmt2 = "v1 + v2 = (%d, %d)\n";
+    var fmt3 = "v1 * 3 = (%d, %d)\n";
+    var fmt4 = "v1 . v2 = %d\n";
+
+    printf(fmt1, v1.x, v1.y, v2.x, v2.y);
+    printf(fmt2, sum.x, sum.y);
+    printf(fmt3, scaled.x, scaled.y);
+    printf(fmt4, dot);
+
+    return 0;
+}

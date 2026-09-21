@@ -24,13 +24,21 @@ class Parser {
     int _pos;
     vector<Function *> _functions;
     map<string, StructDefInfo> _struct_defs;
+    std::string _base_dir;
+    std::set<std::string> _loaded_files;
+    std::set<std::string> _defined_functions;
 
  public:
-    vector<Function *> parse(vector<Token> &tokens);
+    vector<Function *> parse(vector<Token> &tokens, const string &base_dir = "");
+    vector<Function *> parse_file(const string &filepath);
     const map<string, StructDefInfo>& getStructDefs() const { return _struct_defs; }
 
  private:
     Token consume(vector<Token> &, Token::Type);
+
+    void parse_top_level(vector<Token> &tokens, const string &base_dir);
+    void import_dorothy_file(const string &file_path, const string &base_dir, Token import_tok);
+    string resolve_path(const string &path, const string &base_dir);
 
     Function *parse_function(vector<Token> &);
     void parse_struct_def(vector<Token> &);
