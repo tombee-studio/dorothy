@@ -205,7 +205,8 @@ void InitializedDeclVar::compile(vector<Code>& ofs, map<string, int>& vars,
             ctor->body->compile(ofs, vars, functions, offset);
 
             // Clean up: reset SP to before params, remove param vars
-            for (auto& [pname, ptype] : ctor->params) {
+            for (const auto& param : ctor->params) {
+                const auto& pname = param.first;
                 vars.erase(pname);
                 vars.erase("$t:" + pname);
             }
