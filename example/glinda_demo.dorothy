@@ -1,0 +1,248 @@
+// Glinda Framework - Entity Component System Demo
+import "stdio.h";
+import "string.h";
+import "SDL2/SDL.h";
+import "../frameworks/glinda/glinda.dorothy";
+
+// ==========================================
+// 1. TransformComponent (位置・速度・サイズ)
+// ==========================================
+class TransformComponent: Component {
+    var x: int;
+    var y: int;
+    var vx: int;
+    var vy: int;
+    var width: int;
+    var height: int;
+
+    func TransformComponent(x: int, y: int, vx: int, vy: int, w: int, h: int) {
+        this.x = x;
+        this.y = y;
+        this.vx = vx;
+        this.vy = vy;
+        this.width = w;
+        this.height = h;
+    }
+
+    override func getName() -> long {
+        var n = "Transform";
+        return n;
+    }
+
+    override func init() {}
+
+    override func update() {
+        this.x = this.x + this.vx;
+        this.y = this.y + this.vy;
+    }
+
+    override func render(ren: long) {}
+}
+
+// ==========================================
+// 2. RectRendererComponent (描画)
+// ==========================================
+class RectRendererComponent: Component {
+    var r: int;
+    var g: int;
+    var b: int;
+
+    func RectRendererComponent(r: int, g: int, b: int) {
+        this.r = r;
+        this.g = g;
+        this.b = b;
+    }
+
+    override func getName() -> long {
+        var n = "RectRenderer";
+        return n;
+    }
+
+    override func init() {}
+    override func update() {}
+
+    override func render(ren: long) {
+        var tName = "Transform";
+        var t: TransformComponent = this.entity.getComponent(tName);
+        if (t != 0) {
+            glinda_draw_rect(ren, t.x, t.y, t.width, t.height, this.r, this.g, this.b, 255);
+        }
+    }
+}
+
+// ==========================================
+// 3. BouncingPhysicsComponent (画面端での反射)
+// ==========================================
+class BouncingPhysicsComponent: Component {
+    var screenW: int;
+    var screenH: int;
+
+    func BouncingPhysicsComponent(sw: int, sh: int) {
+        this.screenW = sw;
+        this.screenH = sh;
+    }
+
+    override func getName() -> long {
+        var n = "BouncingPhysics";
+        return n;
+    }
+
+    override func init() {}
+
+    override func update() {
+        var tName = "Transform";
+        var t: TransformComponent = this.entity.getComponent(tName);
+        if (t != 0) {
+            if (t.x <= 0) {
+                t.x = 0;
+                if (t.vx < 0) {
+                    t.vx = 0 - t.vx;
+                }
+            }
+            if (t.x + t.width >= this.screenW) {
+                t.x = this.screenW - t.width;
+                if (t.vx > 0) {
+                    t.vx = 0 - t.vx;
+                }
+            }
+            if (t.y <= 0) {
+                t.y = 0;
+                if (t.vy < 0) {
+                    t.vy = 0 - t.vy;
+                }
+            }
+            if (t.y + t.height >= this.screenH) {
+                t.y = this.screenH - t.height;
+                if (t.vy > 0) {
+                    t.vy = 0 - t.vy;
+                }
+            }
+        }
+    }
+
+    override func render(ren: long) {}
+}
+
+// ==========================================
+// 4. PlayerControllerComponent (キーボード操作)
+// ==========================================
+class PlayerControllerComponent: Component {
+    var speed: int;
+    var screenW: int;
+
+    func PlayerControllerComponent(spd: int, sw: int) {
+        this.speed = spd;
+        this.screenW = sw;
+    }
+
+    override func getName() -> long {
+        var n = "PlayerController";
+        return n;
+    }
+
+    override func init() {}
+
+    override func update() {
+        var numkeys: int = 0;
+        var state: long = SDL_GetKeyboardState(numkeys);
+        if (state != 0) {
+            var tName = "Transform";
+            var t: TransformComponent = this.entity.getComponent(tName);
+            if (t != 0) {
+                // SDL_SCANCODE_LEFT = 80, SDL_SCANCODE_A = 4
+                var left_pressed: int = 0;
+                if (state[80] != 0) left_pressed = 1;
+                if (state[4] != 0) left_pressed = 1;
+
+                // SDL_SCANCODE_RIGHT = 79, SDL_SCANCODE_D = 7
+                var right_pressed: int = 0;
+                if (state[79] != 0) right_pressed = 1;
+                if (state[7] != 0) right_pressed = 1;
+
+                if (left_pressed == 1) {
+                    t.x = t.x - this.speed;
+                }
+                if (right_pressed == 1) {
+                    t.x = t.x + this.speed;
+                }
+
+                // Clamp to screen bounds
+                if (t.x < 0) t.x = 0;
+                if (t.x + t.width > this.screenW) t.x = this.screenW - t.width;
+            }
+        }
+    }
+
+    override func render(ren: long) {}
+}
+
+// ==========================================
+// Helper functions for building entities
+// ==========================================
+func create_ball(scene: Scene, x: int, y: int, vx: int, vy: int, size: int, r: int, g: int, b: int) {
+    var e: Entity = Entity();
+    var trans: TransformComponent = TransformComponent(x, y, vx, vy, size, size);
+    var bounce: BouncingPhysicsComponent = BouncingPhysicsComponent(640, 480);
+    var render: RectRendererComponent = RectRendererComponent(r, g, b);
+    e.addComponent(trans);
+    e.addComponent(bounce);
+    e.addComponent(render);
+    scene.addEntity(e);
+}
+
+func create_block(scene: Scene, x: int, y: int, w: int, h: int, r: int, g: int, b: int) {
+    var e: Entity = Entity();
+    var trans: TransformComponent = TransformComponent(x, y, 0, 0, w, h);
+    var render: RectRendererComponent = RectRendererComponent(r, g, b);
+    e.addComponent(trans);
+    e.addComponent(render);
+    scene.addEntity(e);
+}
+
+func main() -> int {
+    var msg_start = "=== Glinda Framework (Entity-Component System) Started! ===\n";
+    printf(msg_start);
+    var msg_ctrl = "Controls: [Left/Right] or [A/D] to move paddle, [ESC] to quit\n";
+    printf(msg_ctrl);
+
+    var app: GlindaApp = GlindaApp(640, 480);
+    var title = "Glinda ECS Framework Demo - Dorothy SDL2";
+    var err: int = app.initSDL(title);
+    if (err != 0) {
+        return 1;
+    }
+
+    var scene: Scene = Scene();
+
+    // 1. Create Player Paddle Entity (Transform + PlayerController + RectRenderer)
+    var player: Entity = Entity();
+    var pTrans: TransformComponent = TransformComponent(270, 440, 0, 0, 100, 16);
+    var pCtrl: PlayerControllerComponent = PlayerControllerComponent(8, 640);
+    var pRend: RectRendererComponent = RectRendererComponent(80, 180, 255);
+    player.addComponent(pTrans);
+    player.addComponent(pCtrl);
+    player.addComponent(pRend);
+    scene.addEntity(player);
+
+    // 2. Create Bouncing Balls Entities (Transform + BouncingPhysics + RectRenderer)
+    create_ball(scene, 100, 100, 4, 3, 14, 255, 80, 80);
+    create_ball(scene, 250, 150, 3, 5, 18, 80, 255, 120);
+    create_ball(scene, 400, 200, 5, 2, 12, 255, 220, 60);
+    create_ball(scene, 500, 120, 2, 4, 16, 220, 100, 255);
+    create_ball(scene, 320, 80, 4, 4, 10, 255, 150, 50);
+
+    // 3. Create Static Decorative Blocks
+    create_block(scene, 50, 40, 60, 16, 180, 80, 200);
+    create_block(scene, 150, 40, 60, 16, 80, 180, 200);
+    create_block(scene, 250, 40, 60, 16, 200, 180, 80);
+    create_block(scene, 350, 40, 60, 16, 200, 80, 80);
+    create_block(scene, 450, 40, 60, 16, 80, 200, 120);
+    create_block(scene, 550, 40, 60, 16, 200, 120, 200);
+
+    app.setScene(scene);
+    app.run();
+
+    var msg_end = "=== Glinda Framework Terminated Cleanly ===\n";
+    printf(msg_end);
+    return 0;
+}

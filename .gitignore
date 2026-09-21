@@ -2,7 +2,8 @@ obj/
 bin/
 txt/
 .vscode/
-Lib/
+Lib/libdorothy.a
+!lib/
 dist/
 
 .DS_Store

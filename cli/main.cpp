@@ -152,10 +152,19 @@ static int compile_windows(const string &ir_file, const string &out_file) {
         return 1;
     }
 
+    string extra_libs = "";
+    ifstream ifs(ir_file);
+    string content((std::istreambuf_iterator<char>(ifs)),
+                   (std::istreambuf_iterator<char>()));
+    if (content.find("@SDL_") != string::npos) {
+        extra_libs = " -lmingw32 -lSDL2main -lSDL2";
+    }
+
     // Step 2: COFF object -> .exe via MinGW-w64 GCC
     string gcc_cmd = find_mingw_gcc() +
                      " -o " + out_file +
-                     " " + obj_file;
+                     " " + obj_file +
+                     extra_libs;
     int ret = system(gcc_cmd.c_str());
     remove(obj_file.c_str());
     return ret == 0 ? 0 : 1;
@@ -163,11 +172,32 @@ static int compile_windows(const string &ir_file, const string &out_file) {
 
 static int compile_unix(const string &ir_file, const string &out_file,
                          Target target) {
+    string extra_libs = "";
+    ifstream ifs(ir_file);
+    string content((std::istreambuf_iterator<char>(ifs)),
+                   (std::istreambuf_iterator<char>()));
+    if (content.find("@SDL_") != string::npos) {
+        FILE *fp = popen("sdl2-config --libs 2>/dev/null", "r");
+        if (fp) {
+            char buf[512];
+            if (fgets(buf, sizeof(buf), fp)) {
+                string s(buf);
+                while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
+                if (!s.empty()) extra_libs = " " + s;
+            }
+            pclose(fp);
+        }
+        if (extra_libs.empty()) {
+            extra_libs = " -lSDL2";
+        }
+    }
+
     string cmd = find_llvm_clang() +
                  " --target=" + get_triple(target) +
                  " -Wno-override-module" +
                  " -o " + out_file +
-                 " " + ir_file;
+                 " " + ir_file +
+                 extra_libs;
     return system(cmd.c_str()) == 0 ? 0 : 1;
 }
 
