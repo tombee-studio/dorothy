@@ -82,6 +82,11 @@ void Parser::parse_top_level(vector<Token> &tokens, const string &base_dir) {
     while (consume(tokens, Token::TK_EOF).type == Token::NONE) {
         if (tokens[_pos].type == Token::KW_STRUCT) {
             parse_struct_def(tokens);
+        } else if (tokens[_pos].type == Token::KW_CLASS ||
+                   (tokens[_pos].type == Token::KW_ABSTRACT &&
+                    _pos + 1 < (int)tokens.size() &&
+                    tokens[_pos + 1].type == Token::KW_CLASS)) {
+            parse_class_def(tokens);
         } else if (tokens[_pos].type == Token::KW_IMPORT &&
                    _pos + 1 < (int)tokens.size() &&
                    tokens[_pos + 1].type == Token::TK_RAWSTRING &&
@@ -117,6 +122,8 @@ vector<Function *> Parser::parse(vector<Token> &tokens, const string &base_dir) 
     _pos = 0;
     _struct_defs.clear();
     g_struct_defs.clear();
+    _class_defs.clear();
+    g_class_defs.clear();
     _functions.clear();
     _defined_functions.clear();
     _loaded_files.clear();
@@ -135,6 +142,8 @@ vector<Function *> Parser::parse_file(const string &filepath) {
     _pos = 0;
     _struct_defs.clear();
     g_struct_defs.clear();
+    _class_defs.clear();
+    g_class_defs.clear();
     _functions.clear();
     _defined_functions.clear();
     _loaded_files.clear();
@@ -217,6 +226,243 @@ void Parser::parse_struct_def(vector<Token> &tokens) {
     g_struct_defs[name_tok.id] = sdef;
 }
 
+void Parser::parse_class_def(vector<Token> &tokens) {
+    bool is_abstract = false;
+    if (tokens[_pos].type == Token::KW_ABSTRACT) {
+        is_abstract = true;
+        _pos++;
+    }
+    Token class_tok = consume(tokens, Token::KW_CLASS);
+    if (class_tok.type == Token::NONE)
+        throw ParseError("expected 'class'", tokens[_pos]);
+
+    Token name_tok = consume(tokens, Token::TK_ID);
+    if (name_tok.type == Token::NONE)
+        throw ParseError("expected class name", tokens[_pos]);
+
+    string class_name = name_tok.id;
+    if (_class_defs.count(class_name) || _struct_defs.count(class_name))
+        throw ParseError("redefinition of type '" + class_name + "'", name_tok);
+
+    ClassDefInfo cdef;
+    cdef.name = class_name;
+    cdef.is_abstract = is_abstract;
+
+    // Inheritance: class A: B
+    if (consume(tokens, (Token::Type)':').type != Token::NONE) {
+        Token base_tok = consume(tokens, Token::TK_ID);
+        if (base_tok.type == Token::NONE)
+            throw ParseError("expected base class name after ':'", tokens[_pos]);
+        string base_name = base_tok.id;
+        if (!_class_defs.count(base_name))
+            throw ParseError("unknown base class: " + base_name, base_tok);
+        cdef.base_class = base_name;
+        const auto &base_def = _class_defs[base_name];
+
+        // Inherit fields
+        cdef.fields = base_def.fields;
+
+        // Inherit vtable methods
+        cdef.vtable_methods = base_def.vtable_methods;
+        for (auto *m : cdef.vtable_methods) {
+            cdef.methods[m->name] = m;
+        }
+    }
+
+    if (consume(tokens, (Token::Type)'{').type == Token::NONE)
+        throw ParseError("expected '{' in class definition", tokens[_pos]);
+
+    _class_defs[class_name] = cdef;
+    g_class_defs[class_name] = cdef;
+
+    while (tokens[_pos].type != (Token::Type)'}' && tokens[_pos].type != Token::TK_EOF) {
+        if (tokens[_pos].type == Token::KW_VAR) {
+            // var fname: type;
+            _pos++;
+            Token fname = consume(tokens, Token::TK_ID);
+            if (fname.type == Token::NONE)
+                throw ParseError("expected field name", tokens[_pos]);
+            if (consume(tokens, (Token::Type)':').type == Token::NONE)
+                throw ParseError("expected ':' in field declaration", tokens[_pos]);
+
+            if (tokens[_pos].type == Token::TK_ID && _class_defs.count(tokens[_pos].id)) {
+                string field_class = tokens[_pos].id;
+                _pos++;
+                if (consume(tokens, (Token::Type)';').type == Token::NONE)
+                    throw ParseError("expected ';' after field declaration", tokens[_pos]);
+                if (cdef.fieldIndex(fname.id) >= 0)
+                    throw ParseError("duplicate field '" + fname.id + "' in class " + class_name, fname);
+                cdef.fields.push_back({fname.id, VarType::CLASS, field_class});
+            } else if (tokens[_pos].type == Token::TK_ID && _struct_defs.count(tokens[_pos].id)) {
+                string field_struct = tokens[_pos].id;
+                _pos++;
+                if (consume(tokens, (Token::Type)';').type == Token::NONE)
+                    throw ParseError("expected ';' after field declaration", tokens[_pos]);
+                if (cdef.fieldIndex(fname.id) >= 0)
+                    throw ParseError("duplicate field '" + fname.id + "' in class " + class_name, fname);
+                cdef.fields.push_back({fname.id, VarType::STRUCT, field_struct});
+            } else if (is_type_keyword(tokens[_pos].type)) {
+                VarType ftype = token_to_vartype(tokens[_pos].type);
+                _pos++;
+                if (consume(tokens, (Token::Type)';').type == Token::NONE)
+                    throw ParseError("expected ';' after field declaration", tokens[_pos]);
+                if (cdef.fieldIndex(fname.id) >= 0)
+                    throw ParseError("duplicate field '" + fname.id + "' in class " + class_name, fname);
+                cdef.fields.push_back({fname.id, ftype, ""});
+            } else {
+                throw ParseError("expected type in field declaration", tokens[_pos]);
+            }
+        } else if (tokens[_pos].type == Token::KW_CONSTRUCTOR) {
+            // constructor(params) { body }
+            _pos++;
+            auto params_decl = parse_declargs(tokens);
+            vector<pair<string, VarType>> params;
+            for (auto *d : params_decl)
+                params.push_back({d->getId(), d->getType()});
+            auto body = parse_block(tokens);
+            cdef.constructor = new ConstructorInfo{params, body};
+        } else if (tokens[_pos].type == Token::KW_ABSTRACT) {
+            // abstract func mname(params): ret; OR abstract func mname(params) -> ret;
+            if (!is_abstract) {
+                throw ParseError("cannot declare abstract method in non-abstract class '" + class_name + "'", tokens[_pos]);
+            }
+            _pos++;
+            if (consume(tokens, Token::KW_FUNC).type == Token::NONE)
+                throw ParseError("expected 'func' after 'abstract'", tokens[_pos]);
+            Token mname = consume(tokens, Token::TK_ID);
+            if (mname.type == Token::NONE)
+                throw ParseError("expected method name", tokens[_pos]);
+            auto params_decl = parse_declargs(tokens);
+            VarType ret_type = VarType::LONG;
+            string ret_type_name = "";
+            if (consume(tokens, (Token::Type)':').type != Token::NONE ||
+                consume(tokens, Token::TK_ARROW).type != Token::NONE) {
+                if (is_type_keyword(tokens[_pos].type)) {
+                    ret_type = token_to_vartype(tokens[_pos].type);
+                    _pos++;
+                } else if (tokens[_pos].type == Token::TK_ID && _class_defs.count(tokens[_pos].id)) {
+                    ret_type = VarType::CLASS;
+                    ret_type_name = tokens[_pos].id;
+                    _pos++;
+                } else if (tokens[_pos].type == Token::TK_ID && _struct_defs.count(tokens[_pos].id)) {
+                    ret_type = VarType::STRUCT;
+                    ret_type_name = tokens[_pos].id;
+                    _pos++;
+                } else {
+                    throw ParseError("expected return type after ':' or '->'", tokens[_pos]);
+                }
+            }
+            if (consume(tokens, (Token::Type)';').type == Token::NONE)
+                throw ParseError("expected ';' after abstract method declaration", tokens[_pos]);
+
+            auto *minfo = new MethodInfo();
+            minfo->name = mname.id;
+            minfo->params = params_decl;
+            minfo->ret_type = ret_type;
+            minfo->ret_type_name = ret_type_name;
+            minfo->body = nullptr;
+            minfo->is_abstract = true;
+            minfo->is_override = false;
+            minfo->class_name = class_name;
+
+            int existing_vtable_idx = cdef.getMethodVtableIndex(mname.id);
+            if (existing_vtable_idx >= 0) {
+                minfo->vtable_index = existing_vtable_idx;
+                cdef.vtable_methods[existing_vtable_idx] = minfo;
+            } else {
+                minfo->vtable_index = (int)cdef.vtable_methods.size();
+                cdef.vtable_methods.push_back(minfo);
+            }
+            cdef.methods[mname.id] = minfo;
+        } else if (tokens[_pos].type == Token::KW_OVERRIDE || tokens[_pos].type == Token::KW_FUNC) {
+            bool is_override = (tokens[_pos].type == Token::KW_OVERRIDE);
+            if (is_override) {
+                _pos++;
+            }
+            if (consume(tokens, Token::KW_FUNC).type == Token::NONE)
+                throw ParseError("expected 'func' in method declaration", tokens[_pos]);
+            Token mname = consume(tokens, Token::TK_ID);
+            if (mname.type == Token::NONE)
+                throw ParseError("expected method name", tokens[_pos]);
+            auto params_decl = parse_declargs(tokens);
+
+            // Check if this is a constructor: func ClassName(...) { ... }
+            if (mname.id == class_name) {
+                if (is_override) {
+                    throw ParseError("constructor cannot be marked 'override'", mname);
+                }
+                auto body = parse_block(tokens);
+                vector<pair<string, VarType>> params;
+                for (auto *d : params_decl)
+                    params.push_back({d->getId(), d->getType()});
+                cdef.constructor = new ConstructorInfo{params, body};
+            } else {
+                VarType ret_type = VarType::LONG;
+                string ret_type_name = "";
+                if (consume(tokens, (Token::Type)':').type != Token::NONE ||
+                    consume(tokens, Token::TK_ARROW).type != Token::NONE) {
+                    if (is_type_keyword(tokens[_pos].type)) {
+                        ret_type = token_to_vartype(tokens[_pos].type);
+                        _pos++;
+                    } else if (tokens[_pos].type == Token::TK_ID && _class_defs.count(tokens[_pos].id)) {
+                        ret_type = VarType::CLASS;
+                        ret_type_name = tokens[_pos].id;
+                        _pos++;
+                    } else if (tokens[_pos].type == Token::TK_ID && _struct_defs.count(tokens[_pos].id)) {
+                        ret_type = VarType::STRUCT;
+                        ret_type_name = tokens[_pos].id;
+                        _pos++;
+                    } else {
+                        throw ParseError("expected return type after ':' or '->'", tokens[_pos]);
+                    }
+                }
+                auto body = parse_block(tokens);
+
+                int existing_vtable_idx = cdef.getMethodVtableIndex(mname.id);
+                if (is_override && existing_vtable_idx < 0) {
+                    throw ParseError("method '" + mname.id + "' marked override does not override any base class method", mname);
+                }
+
+                auto *minfo = new MethodInfo();
+                minfo->name = mname.id;
+                minfo->params = params_decl;
+                minfo->ret_type = ret_type;
+                minfo->ret_type_name = ret_type_name;
+                minfo->body = body;
+                minfo->is_abstract = false;
+                minfo->is_override = is_override || (existing_vtable_idx >= 0);
+                minfo->class_name = class_name;
+
+                if (existing_vtable_idx >= 0) {
+                    minfo->vtable_index = existing_vtable_idx;
+                    cdef.vtable_methods[existing_vtable_idx] = minfo;
+                } else {
+                    minfo->vtable_index = (int)cdef.vtable_methods.size();
+                    cdef.vtable_methods.push_back(minfo);
+                }
+                cdef.methods[mname.id] = minfo;
+            }
+        } else {
+            throw ParseError("unexpected token in class body", tokens[_pos]);
+        }
+    }
+
+    if (consume(tokens, (Token::Type)'}').type == Token::NONE)
+        throw ParseError("expected '}' to close class", tokens[_pos]);
+
+    // Validation: Concrete class must implement all abstract methods
+    if (!cdef.is_abstract) {
+        for (auto *m : cdef.vtable_methods) {
+            if (m->is_abstract) {
+                throw ParseError("class '" + class_name + "' must implement abstract method '" + m->name + "'", name_tok);
+            }
+        }
+    }
+
+    _class_defs[class_name] = cdef;
+    g_class_defs[class_name] = cdef;
+}
+
 Function *Parser::parse_function(vector<Token> &tokens) {
     if (consume(tokens, Token::KW_FUNC).type == Token::NONE) {
         if (consume(tokens, Token::KW_IMPORT).type == Token::NONE) {
@@ -250,30 +496,23 @@ Function *Parser::parse_function(vector<Token> &tokens) {
     VarType ret_type = VarType::LONG;
     string ret_struct_name = "";
     bool has_explicit_ret_type = false;
-    if (consume(tokens, (Token::Type)':').type != Token::NONE) {
-        // func name(): type {}
+    if (consume(tokens, (Token::Type)':').type != Token::NONE ||
+        consume(tokens, Token::TK_ARROW).type != Token::NONE) {
         has_explicit_ret_type = true;
         if (is_type_keyword(tokens[_pos].type)) {
             ret_type = token_to_vartype(tokens[_pos].type);
+            _pos++;
+        } else if (tokens[_pos].type == Token::TK_ID && _class_defs.count(tokens[_pos].id)) {
+            ret_type = VarType::CLASS;
+            ret_struct_name = tokens[_pos].id;
             _pos++;
         } else if (tokens[_pos].type == Token::TK_ID && _struct_defs.count(tokens[_pos].id)) {
             ret_type = VarType::STRUCT;
             ret_struct_name = tokens[_pos].id;
             _pos++;
         } else {
-            throw ParseError("expected type keyword after ':' in function return type",
-                             tokens[_pos]);
+            throw ParseError("expected type after ':' or '->'", tokens[_pos]);
         }
-    } else if (consume(tokens, Token::TK_ARROW).type != Token::NONE) {
-        // func name() -> StructName {} (legacy struct return syntax)
-        has_explicit_ret_type = true;
-        Token struct_tok = consume(tokens, Token::TK_ID);
-        if (struct_tok.type == Token::NONE)
-            throw ParseError("expected struct name after '->'", tokens[_pos]);
-        if (!_struct_defs.count(struct_tok.id))
-            throw ParseError("unknown struct type: " + struct_tok.id, tokens[_pos]);
-        ret_type = VarType::STRUCT;
-        ret_struct_name = struct_tok.id;
     }
     auto block = parse_block(tokens);
     return new Function(id_token.id, declargs, block, ret_type, ret_struct_name,
@@ -302,6 +541,11 @@ DeclVar *Parser::parse_declparam(vector<Token> &tokens) {
         throw ParseError(format("expected parameter name at %d", _pos), tokens[_pos]);
     if (consume(tokens, (Token::Type)':').type == Token::NONE)
         throw ParseError("expected ':' after parameter name", tokens[_pos]);
+    if (tokens[_pos].type == Token::TK_ID && _class_defs.count(tokens[_pos].id)) {
+        string class_name = tokens[_pos].id;
+        _pos++;
+        return new DeclVar(id_token.id, VarType::CLASS, false, class_name);
+    }
     if (tokens[_pos].type == Token::TK_ID && _struct_defs.count(tokens[_pos].id)) {
         string struct_name = tokens[_pos].id;
         _pos++;
@@ -426,6 +670,12 @@ Statement *Parser::parse_declvarst(vector<Token> &tokens) {
         if (consume(tokens, (Token::Type)';').type == Token::NONE)
             throw ParseError("expected ';'", tokens[_pos]);
 
+        auto* ci = dynamic_cast<ClassInit*>(init);
+        if (ci) {
+            return new DeclVarSt(new InitializedDeclVar(
+                id_token.id, VarType::CLASS, is_const, init, ci->getClassName()));
+        }
+
         auto* si = dynamic_cast<StructInit*>(init);
         if (si) {
             return new DeclVarSt(new InitializedDeclVar(
@@ -440,6 +690,25 @@ Statement *Parser::parse_declvarst(vector<Token> &tokens) {
 
     if (consume(tokens, (Token::Type)':').type == Token::NONE)
         throw ParseError("expected ':' or '=' after variable name", tokens[_pos]);
+
+    // Class type: var name: ClassName [= expr];
+    if (tokens[_pos].type == Token::TK_ID && _class_defs.count(tokens[_pos].id)) {
+        string class_name = tokens[_pos].id;
+        _pos++;
+        if (consume(tokens, (Token::Type)'=').type != Token::NONE) {
+            auto init = parse_expression(tokens);
+            if (!init) throw ParseError("expected class initializer expression", tokens[_pos]);
+            if (consume(tokens, (Token::Type)';').type == Token::NONE)
+                throw ParseError("expected ';'", tokens[_pos]);
+            return new DeclVarSt(
+                new InitializedDeclVar(id_token.id, VarType::CLASS, is_const, init, class_name));
+        }
+        if (is_const)
+            throw ParseError("'let' class variable requires an initializer", tokens[_pos]);
+        if (consume(tokens, (Token::Type)';').type == Token::NONE)
+            throw ParseError("expected ';'", tokens[_pos]);
+        return new DeclVarSt(new DeclVar(id_token.id, VarType::CLASS, false, class_name));
+    }
 
     // Struct type: var name: StructName = StructName(field=val, ...);
     if (tokens[_pos].type == Token::TK_ID && _struct_defs.count(tokens[_pos].id)) {
@@ -456,7 +725,7 @@ Statement *Parser::parse_declvarst(vector<Token> &tokens) {
     }
 
     if (!is_type_keyword(tokens[_pos].type))
-        throw ParseError("expected type keyword or struct name after ':'", tokens[_pos]);
+        throw ParseError("expected type keyword or type name after ':'", tokens[_pos]);
     VarType vtype = token_to_vartype(tokens[_pos].type);
     _pos++;
 
@@ -508,6 +777,8 @@ Statement *Parser::parse_statement(vector<Token> &tokens) {
     if ((statement = parse_returnst(tokens))) return statement;
     if ((exp = parse_expression(tokens))) {
         if (consume(tokens, (Token::Type)';').type != Token::NONE) {
+            auto *cme = dynamic_cast<CallMethodExp*>(exp);
+            if (cme) return new CallMethodSt(cme);
             return new ExpressionSt(exp);
         } else {
             throw ParseError("expected ';'", tokens[_pos]);
@@ -663,7 +934,12 @@ Expression *Parser::parse_array_index(vector<Token> &tokens) {
             Token member = consume(tokens, Token::TK_ID);
             if (member.type == Token::NONE)
                 throw ParseError("expected member name after '.'", tokens[_pos]);
-            base = new MemberAccess(base, member.id);
+            if (tokens[_pos].type == (Token::Type)'(') {
+                vector<Expression *> args = parse_arg(tokens);
+                base = new CallMethodExp(base, member.id, std::move(args));
+            } else {
+                base = new MemberAccess(base, member.id);
+            }
         } else {
             break;
         }
@@ -691,9 +967,33 @@ Expression *Parser::parse_struct_init(vector<Token> &tokens) {
     return new StructInit(struct_name, std::move(args));
 }
 
+Expression *Parser::parse_class_init(vector<Token> &tokens) {
+    if (tokens[_pos].type != Token::TK_ID) return NULL;
+    if (!_class_defs.count(tokens[_pos].id)) return NULL;
+    if (tokens[_pos + 1].type != (Token::Type)'(') return NULL;
+    string class_name = tokens[_pos].id;
+    if (_class_defs[class_name].is_abstract) {
+        throw ParseError("cannot instantiate abstract class '" + class_name + "'", tokens[_pos]);
+    }
+    _pos += 2;  // consume ClassName and (
+    vector<Expression *> args;
+    while (tokens[_pos].type != (Token::Type)')') {
+        auto val = parse_expression(tokens);
+        if (!val) throw ParseError("expected expression in class constructor call", tokens[_pos]);
+        args.push_back(val);
+        if (tokens[_pos].type != (Token::Type)')') {
+            if (consume(tokens, (Token::Type)',').type == Token::NONE)
+                throw ParseError("expected ',' or ')' in class constructor call", tokens[_pos]);
+        }
+    }
+    consume(tokens, (Token::Type)')');
+    return new ClassInit(class_name, std::move(args));
+}
+
 Expression *Parser::parse_term(vector<Token> &tokens) {
     Token token;
     Expression *exp;
+    if ((exp = parse_class_init(tokens))) return exp;
     if ((exp = parse_struct_init(tokens))) return exp;
     if ((exp = parse_call(tokens))) return exp;
     if ((exp = parse_integer(tokens))) return exp;
@@ -776,3 +1076,4 @@ Token Parser::consume(vector<Token> &tokens, Token::Type type) {
         return Token::none();
     }
 }
+

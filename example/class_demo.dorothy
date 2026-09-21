@@ -1,0 +1,112 @@
+// Dorothy Class System Demo:
+// - Class definitions & constructor
+// - Reference semantics (pass-by-reference)
+// - Inheritance (class A: B)
+// - Abstract classes & methods (abstract class, abstract func)
+// - Method override & dynamic polymorphism (override func)
+
+import "stdio.h";
+
+abstract class Shape {
+    abstract func area() -> int;
+    abstract func describe();
+}
+
+class Rectangle: Shape {
+    var width: int;
+    var height: int;
+
+    func Rectangle(w: int, h: int) {
+        this.width = w;
+        this.height = h;
+    }
+
+    override func area() -> int {
+        return this.width * this.height;
+    }
+
+    override func describe() {
+        var msg = "Rectangle(w=%d, h=%d, area=%d)\n";
+        printf(msg, this.width, this.height, this.area());
+    }
+}
+
+class Square: Shape {
+    var side: int;
+
+    func Square(s: int) {
+        this.side = s;
+    }
+
+    override func area() -> int {
+        return this.side * this.side;
+    }
+
+    override func describe() {
+        var msg = "Square(side=%d, area=%d)\n";
+        printf(msg, this.side, this.area());
+    }
+}
+
+class Counter {
+    var count: int;
+
+    func Counter(initial: int) {
+        this.count = initial;
+    }
+
+    func increment(delta: int) {
+        this.count = this.count + delta;
+    }
+
+    func getCount() -> int {
+        return this.count;
+    }
+}
+
+// Modify counter via reference
+func modifyCounter(c: Counter, addVal: int) {
+    c.increment(addVal);
+}
+
+func printShapeInfo(s: Shape) {
+    s.describe();
+}
+
+func main() -> int {
+    var header = "=== Dorothy Class Feature Demo ===\n\n";
+    printf(header);
+
+    // 1. Reference semantics demo
+    var sec1 = "--- 1. Reference Semantics ---\n";
+    printf(sec1);
+    var c1: Counter = Counter(10);
+    var c2: Counter = c1; // c2 references the exact same instance as c1
+    var msg_init = "Initial c1: %d, c2: %d\n";
+    printf(msg_init, c1.getCount(), c2.getCount());
+
+    c2.increment(5);
+    var msg_c2 = "After c2.increment(5) -> c1: %d, c2: %d\n";
+    printf(msg_c2, c1.getCount(), c2.getCount());
+
+    modifyCounter(c1, 20);
+    var msg_mod = "After modifyCounter(c1, 20) -> c1: %d, c2: %d\n\n";
+    printf(msg_mod, c1.getCount(), c2.getCount());
+
+    // 2. Inheritance & Polymorphism Demo
+    var sec2 = "--- 2. Inheritance & Polymorphism ---\n";
+    printf(sec2);
+    var rect: Rectangle = Rectangle(6, 7);
+    var sq: Square = Square(5);
+
+    printShapeInfo(rect);
+    printShapeInfo(sq);
+
+    var totalArea: int = rect.area() + sq.area();
+    var msg_tot = "Total Area: %d\n\n";
+    printf(msg_tot, totalArea);
+
+    var footer = "=== All Class Demos Completed Successfully! ===\n";
+    printf(footer);
+    return 0;
+}

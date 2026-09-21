@@ -24,6 +24,7 @@ class Parser {
     int _pos;
     vector<Function *> _functions;
     map<string, StructDefInfo> _struct_defs;
+    map<string, ClassDefInfo> _class_defs;
     std::string _base_dir;
     std::set<std::string> _loaded_files;
     std::set<std::string> _defined_functions;
@@ -32,6 +33,7 @@ class Parser {
     vector<Function *> parse(vector<Token> &tokens, const string &base_dir = "");
     vector<Function *> parse_file(const string &filepath);
     const map<string, StructDefInfo>& getStructDefs() const { return _struct_defs; }
+    const map<string, ClassDefInfo>& getClassDefs() const { return _class_defs; }
 
  private:
     Token consume(vector<Token> &, Token::Type);
@@ -42,6 +44,7 @@ class Parser {
 
     Function *parse_function(vector<Token> &);
     void parse_struct_def(vector<Token> &);
+    void parse_class_def(vector<Token> &);
     vector<DeclVar *> parse_declargs(vector<Token> &);
     DeclVar *parse_declparam(vector<Token> &);
     DeclVar *parse_declvar(vector<Token> &);
@@ -67,5 +70,6 @@ class Parser {
     Expression *parse_integer(vector<Token> &);
     Expression *parse_call(vector<Token> &);
     Expression *parse_struct_init(vector<Token> &);
+    Expression *parse_class_init(vector<Token> &);
     vector<Expression *> parse_arg(vector<Token> &);
 };

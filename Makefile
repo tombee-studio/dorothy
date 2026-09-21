@@ -1,9 +1,9 @@
 GTEST_CFLAGS = $(shell pkg-config --cflags gtest)
 GTEST_LIBS   = $(shell pkg-config --libs gtest_main) -lpthread
 
-.PHONY: setup lib cli test
+.PHONY: default setup lib cli test
 
-setup:
+default: lib
 	sh install.sh
 	git config core.hooksPath .githooks
 
@@ -26,6 +26,7 @@ test:
 			tests/gtest_parser.cpp \
 			tests/gtest_integration.cpp \
 			tests/gtest_struct.cpp \
+			tests/gtest_class.cpp \
 			tests/gtest_typechecker.cpp \
 			obj/*.o $(GTEST_LIBS) -o dist/test_runner
 		./dist/test_runner

@@ -2,10 +2,14 @@
 #include <cstring>
 #include "../include/ast.hpp"
 
-// ===== Global struct registry =====
+// ===== Global struct & class registry =====
 map<string, StructDefInfo> g_struct_defs;
 string g_this_struct;
 map<string, string> g_var_struct_types;
+
+map<string, ClassDefInfo> g_class_defs;
+string g_this_class;
+map<string, string> g_var_class_types;
 
 void Node::addTab(ostream& os, int tab) {
     for (int i = 0; i < tab; i++) {
@@ -23,6 +27,7 @@ static const char* vartype_name(VarType t) {
         case VarType::FLOAT:    return "float";
         case VarType::DOUBLE:   return "double";
         case VarType::STRUCT:   return "struct";
+        case VarType::CLASS:    return "class";
         case VarType::INFERRED: return "auto";
     }
     return "int";
@@ -977,11 +982,6 @@ void Access::lcompile(vector<Code>& ofs, map<string, int>& vars,
 
 void Variable::print(ostream& os, int tab) { os << _id; }
 
-VarType Variable::llvm_declared_type(LLVMGenCtx& ctx) const {
-    auto it = ctx.var_types.find(_id);
-    return (it != ctx.var_types.end()) ? it->second : VarType::LONG;
-}
-
 VarType Variable::llvm_etype(LLVMGenCtx& ctx) const {
     return canonical_type(llvm_declared_type(ctx));
 }
@@ -1140,3 +1140,89 @@ void StructInit::print(ostream& os, int tab) {
     }
     os << ")";
 }
+
+// ===== Class AST methods =====
+
+void ClassInit::print(ostream& os, int tab) {
+    os << _class_name << "(";
+    for (int i = 0; i < (int)_args.size(); i++) {
+        if (i > 0) os << ", ";
+        _args[i]->print(os, tab);
+    }
+    os << ")";
+}
+
+void ClassInit::compile(vector<Code>&, map<string, int>&, map<string, int>&, int) {
+    throw CompileError("classes are only supported in LLVM target");
+}
+
+void ClassInit::lcompile(vector<Code>&, map<string, int>&, map<string, int>&, int) {
+    throw CompileError("cannot use class instance initialization as lvalue");
+}
+
+void CallMethodExp::print(ostream& os, int tab) {
+    _object->print(os, tab);
+    os << "." << _method_name << "(";
+    for (int i = 0; i < (int)_args.size(); i++) {
+        if (i > 0) os << ", ";
+        _args[i]->print(os, tab);
+    }
+    os << ")";
+}
+
+void CallMethodExp::compile(vector<Code>&, map<string, int>&, map<string, int>&, int) {
+    throw CompileError("methods are only supported in LLVM target");
+}
+
+void CallMethodExp::lcompile(vector<Code>&, map<string, int>&, map<string, int>&, int) {
+    throw CompileError("cannot use method call as lvalue");
+}
+
+VarType CallMethodExp::llvm_declared_type(LLVMGenCtx& ctx) const {
+    // Determine the return type of the method
+    string cname;
+    if (_object->getVarName() == "$this" && !g_this_class.empty()) {
+        cname = g_this_class;
+    } else {
+        auto it = ctx.struct_var_types.find(_object->getVarName());
+        if (it != ctx.struct_var_types.end()) cname = it->second;
+    }
+    if (!cname.empty() && g_class_defs.count(cname)) {
+        auto* minfo = g_class_defs[cname].getMethod(_method_name);
+        if (minfo) return minfo->ret_type;
+    }
+    return VarType::LONG;
+}
+
+VarType CallMethodExp::llvm_etype(LLVMGenCtx& ctx) const {
+    return canonical_type(llvm_declared_type(ctx));
+}
+
+void CallMethodSt::print(ostream& os, int tab) {
+    Node::addTab(os, tab);
+    _call->print(os, tab);
+    os << ";" << endl;
+}
+
+void CallMethodSt::compile(vector<Code>&, map<string, int>&, map<string, int>&, int) {
+    throw CompileError("methods are only supported in LLVM target");
+}
+
+void ClassDef::print(ostream& os, int tab) {
+    Node::addTab(os, tab);
+    if (_info.is_abstract) os << "abstract ";
+    os << "class " << _info.name;
+    if (!_info.base_class.empty()) os << ": " << _info.base_class;
+    os << " {" << endl;
+    for (auto& f : _info.fields) {
+        Node::addTab(os, tab + 1);
+        os << "var " << f.name << ": " << vartype_name(f.type) << ";" << endl;
+    }
+    Node::addTab(os, tab);
+    os << "}" << endl;
+}
+
+void ClassDef::compile(vector<Code>&, map<string, int>&, map<string, int>&, int) {
+    // No-op for bytecode compiler
+}
+
