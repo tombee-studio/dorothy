@@ -1,6 +1,7 @@
 /* Copyright 2022(Tomoya Bansho@tomoya-kwansei) */
 #include <cstring>
 #include "../include/ast.hpp"
+#include "../include/utils.hpp"
 
 // ===== Global struct & class registry =====
 map<string, StructDefInfo> g_struct_defs;

@@ -1334,22 +1334,68 @@ static VarType member_field_type(LLVMGenCtx& ctx, const string& varname,
     return resolve_path_field_type(sit->second, path);
 }
 
-string MemberAccess::llvm_rval(LLVMGenCtx& ctx) {
-    string varname = resolve_struct_var(ctx, _object->getVarName());
-
-    // Check if it's a class member access
-    string cname;
-    string obj_ptr;
-    if (_object->getVarName() == "$this" || _object->getVarName() == "this") {
-        cname = ctx.this_class;
-        obj_ptr = ctx.this_ptr_reg;
-    } else if (!varname.empty() && ctx.class_var_types.count(varname)) {
-        cname = ctx.class_var_types[varname];
-        string loaded = ctx.fresh("obj.ptr");
-        ctx.out << "  " << loaded << " = load ptr, ptr " << ctx.vars[varname] << "\n";
-        obj_ptr = loaded;
+static string resolve_expr_class_name(LLVMGenCtx& ctx, Expression* expr) {
+    if (!expr) return "";
+    if (dynamic_cast<ThisExpr*>(expr)) {
+        return ctx.this_class;
     }
+    auto* ma = dynamic_cast<MemberAccess*>(expr);
+    if (ma) {
+        string parent_class = resolve_expr_class_name(ctx, ma->getObject());
+        if (!parent_class.empty() && g_class_defs.count(parent_class)) {
+            int idx = g_class_defs[parent_class].fieldIndex(ma->getMember());
+            if (idx >= 0) {
+                const auto& field = g_class_defs[parent_class].fields[idx];
+                if (field.type == VarType::CLASS) {
+                    return field.struct_name;
+                }
+            }
+        }
+        return "";
+    }
+    auto* var_expr = dynamic_cast<Variable*>(expr);
+    if (var_expr) {
+        const string& varname = var_expr->getVarName();
+        if (varname == "$this" || varname == "this") return ctx.this_class;
+        auto it = ctx.class_var_types.find(varname);
+        if (it != ctx.class_var_types.end()) return it->second;
+    }
+    auto* cme = dynamic_cast<CallMethodExp*>(expr);
+    if (cme) {
+        string parent_class = resolve_expr_class_name(ctx, cme->getObject());
+        if (!parent_class.empty() && g_class_defs.count(parent_class)) {
+            auto* minfo = g_class_defs[parent_class].getMethod(cme->getMethodName());
+            if (minfo && minfo->ret_type == VarType::CLASS) {
+                return minfo->ret_type_name;
+            }
+        }
+    }
+    auto* ci = dynamic_cast<ClassInit*>(expr);
+    if (ci) {
+        return ci->getClassName();
+    }
+    return "";
+}
+
+string MemberAccess::llvm_rval(LLVMGenCtx& ctx) {
+    string cname = resolve_expr_class_name(ctx, _object);
     if (!cname.empty() && g_class_defs.count(cname)) {
+        string obj_ptr;
+        auto* this_expr = dynamic_cast<ThisExpr*>(_object);
+        auto* var_expr = dynamic_cast<Variable*>(_object);
+        if (this_expr || (var_expr && (var_expr->getVarName() == "$this" || var_expr->getVarName() == "this"))) {
+            obj_ptr = ctx.this_ptr_reg;
+        } else if (var_expr && ctx.class_var_types.count(var_expr->getVarName())) {
+            const string& varname = var_expr->getVarName();
+            string loaded = ctx.fresh("obj.ptr");
+            ctx.out << "  " << loaded << " = load ptr, ptr " << ctx.vars[varname] << "\n";
+            obj_ptr = loaded;
+        } else {
+            string obj_i64 = _object->llvm_rval(ctx);
+            obj_ptr = ctx.fresh("obj.ptr");
+            ctx.out << "  " << obj_ptr << " = inttoptr i64 " << obj_i64 << " to ptr\n";
+        }
+
         const auto& cdef = g_class_defs[cname];
         int fidx = cdef.fieldIndex(_member);
         if (fidx < 0) throw CompileError(("no field '" + _member + "' in class " + cname).c_str());
@@ -1365,12 +1411,13 @@ string MemberAccess::llvm_rval(LLVMGenCtx& ctx) {
             return r_i64;
         }
         string tstr = llvm_type_str(ftype);
-        string reg = ctx.fresh(varname + "_" + _member);
+        string reg = ctx.fresh(cname + "_" + _member);
         ctx.out << "  " << reg << " = load " << tstr << ", ptr " << fptr << "\n";
         return llvm_to_canonical(ctx, reg, ftype);
     }
 
     // Struct field
+    string varname = resolve_struct_var(ctx, _object->getVarName());
     string path = getFieldPath();
     string ptr = ctx.struct_field_ptrs[varname][path];
     if (ptr.empty())
@@ -1383,21 +1430,24 @@ string MemberAccess::llvm_rval(LLVMGenCtx& ctx) {
 }
 
 string MemberAccess::llvm_lval(LLVMGenCtx& ctx) {
-    string varname = resolve_struct_var(ctx, _object->getVarName());
-
-    // Check if it's a class member access
-    string cname;
-    string obj_ptr;
-    if (_object->getVarName() == "$this" || _object->getVarName() == "this") {
-        cname = ctx.this_class;
-        obj_ptr = ctx.this_ptr_reg;
-    } else if (!varname.empty() && ctx.class_var_types.count(varname)) {
-        cname = ctx.class_var_types[varname];
-        string loaded = ctx.fresh("obj.ptr");
-        ctx.out << "  " << loaded << " = load ptr, ptr " << ctx.vars[varname] << "\n";
-        obj_ptr = loaded;
-    }
+    string cname = resolve_expr_class_name(ctx, _object);
     if (!cname.empty() && g_class_defs.count(cname)) {
+        string obj_ptr;
+        auto* this_expr = dynamic_cast<ThisExpr*>(_object);
+        auto* var_expr = dynamic_cast<Variable*>(_object);
+        if (this_expr || (var_expr && (var_expr->getVarName() == "$this" || var_expr->getVarName() == "this"))) {
+            obj_ptr = ctx.this_ptr_reg;
+        } else if (var_expr && ctx.class_var_types.count(var_expr->getVarName())) {
+            const string& varname = var_expr->getVarName();
+            string loaded = ctx.fresh("obj.ptr");
+            ctx.out << "  " << loaded << " = load ptr, ptr " << ctx.vars[varname] << "\n";
+            obj_ptr = loaded;
+        } else {
+            string obj_i64 = _object->llvm_rval(ctx);
+            obj_ptr = ctx.fresh("obj.ptr");
+            ctx.out << "  " << obj_ptr << " = inttoptr i64 " << obj_i64 << " to ptr\n";
+        }
+
         const auto& cdef = g_class_defs[cname];
         int fidx = cdef.fieldIndex(_member);
         if (fidx < 0) throw CompileError(("no field '" + _member + "' in class " + cname).c_str());
@@ -1408,6 +1458,7 @@ string MemberAccess::llvm_lval(LLVMGenCtx& ctx) {
     }
 
     // Struct field
+    string varname = resolve_struct_var(ctx, _object->getVarName());
     string path = getFieldPath();
     string ptr = ctx.struct_field_ptrs[varname][path];
     if (ptr.empty())
@@ -1416,20 +1467,12 @@ string MemberAccess::llvm_lval(LLVMGenCtx& ctx) {
 }
 
 VarType MemberAccess::llvm_declared_type(LLVMGenCtx& ctx) const {
+    string cname = resolve_expr_class_name(ctx, _object);
+    if (!cname.empty() && g_class_defs.count(cname)) {
+        int idx = g_class_defs[cname].fieldIndex(_member);
+        if (idx >= 0) return g_class_defs[cname].fields[idx].type;
+    }
     string varname = resolve_struct_var(ctx, _object->getVarName());
-    if (_object->getVarName() == "$this" || _object->getVarName() == "this") {
-        if (!ctx.this_class.empty() && g_class_defs.count(ctx.this_class)) {
-            int idx = g_class_defs[ctx.this_class].fieldIndex(_member);
-            if (idx >= 0) return g_class_defs[ctx.this_class].fields[idx].type;
-        }
-    }
-    if (!varname.empty() && ctx.class_var_types.count(varname)) {
-        const string& cname = ctx.class_var_types[varname];
-        if (g_class_defs.count(cname)) {
-            int idx = g_class_defs[cname].fieldIndex(_member);
-            if (idx >= 0) return g_class_defs[cname].fields[idx].type;
-        }
-    }
     return member_field_type(ctx, varname, getFieldPath());
 }
 
@@ -1705,49 +1748,6 @@ string ClassInit::llvm_rval(LLVMGenCtx& ctx) {
     string ret_i64 = ctx.fresh("inst.i64");
     ctx.out << "  " << ret_i64 << " = ptrtoint ptr " << raw_mem << " to i64\n";
     return ret_i64;
-}
-
-static string resolve_expr_class_name(LLVMGenCtx& ctx, Expression* expr) {
-    if (!expr) return "";
-    if (dynamic_cast<ThisExpr*>(expr)) {
-        return ctx.this_class;
-    }
-    auto* ma = dynamic_cast<MemberAccess*>(expr);
-    if (ma) {
-        string parent_class = resolve_expr_class_name(ctx, ma->getObject());
-        if (!parent_class.empty() && g_class_defs.count(parent_class)) {
-            int idx = g_class_defs[parent_class].fieldIndex(ma->getMember());
-            if (idx >= 0) {
-                const auto& field = g_class_defs[parent_class].fields[idx];
-                if (field.type == VarType::CLASS) {
-                    return field.struct_name;
-                }
-            }
-        }
-        return "";
-    }
-    auto* var_expr = dynamic_cast<Variable*>(expr);
-    if (var_expr) {
-        const string& varname = var_expr->getVarName();
-        if (varname == "$this" || varname == "this") return ctx.this_class;
-        auto it = ctx.class_var_types.find(varname);
-        if (it != ctx.class_var_types.end()) return it->second;
-    }
-    auto* cme = dynamic_cast<CallMethodExp*>(expr);
-    if (cme) {
-        string parent_class = resolve_expr_class_name(ctx, cme->getObject());
-        if (!parent_class.empty() && g_class_defs.count(parent_class)) {
-            auto* minfo = g_class_defs[parent_class].getMethod(cme->getMethodName());
-            if (minfo && minfo->ret_type == VarType::CLASS) {
-                return minfo->ret_type_name;
-            }
-        }
-    }
-    auto* ci = dynamic_cast<ClassInit*>(expr);
-    if (ci) {
-        return ci->getClassName();
-    }
-    return "";
 }
 
 // ===== CallMethodExp =====

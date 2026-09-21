@@ -1,339 +1,509 @@
+// Dorothy Breakout Game using Glinda Framework
 import "stdio.h";
+import "string.h";
 import "SDL2/SDL.h";
+import "../lib/glinda/glinda.dorothy";
 
-func draw_rect(ren: long, x: int, y: int, w: int, h: int, r: int, g: int, b: int) {
-    var rect: int[4];
-    rect[0] = x;
-    rect[1] = y;
-    rect[2] = w;
-    rect[3] = h;
-    SDL_SetRenderDrawColor(ren, r, g, b, 255);
-    SDL_RenderFillRect(ren, rect);
-    return 0;
-}
-
-struct Ball {
+// ==========================================
+// 1. TransformComponent (位置・速度・サイズ)
+// ==========================================
+class TransformComponent: Component {
     var x: int;
     var y: int;
     var vx: int;
     var vy: int;
-    var size: int;
+    var width: int;
+    var height: int;
 
-    constructor(x: int, y: int, vx: int, vy: int, size: int) {
+    func TransformComponent(x: int, y: int, vx: int, vy: int, w: int, h: int) {
         this.x = x;
         this.y = y;
         this.vx = vx;
         this.vy = vy;
-        this.size = size;
+        this.width = w;
+        this.height = h;
+    }
+
+    override func getName() -> long {
+        var n = "Transform";
+        return n;
+    }
+
+    override func init() {}
+
+    override func update() {
+        this.x = this.x + this.vx;
+        this.y = this.y + this.vy;
+    }
+
+    override func render(ren: long) {}
+}
+
+// ==========================================
+// 2. RectRendererComponent (矩形描画)
+// ==========================================
+class RectRendererComponent: Component {
+    var r: int;
+    var g: int;
+    var b: int;
+
+    func RectRendererComponent(r: int, g: int, b: int) {
+        this.r = r;
+        this.g = g;
+        this.b = b;
+    }
+
+    override func getName() -> long {
+        var n = "RectRenderer";
+        return n;
+    }
+
+    override func init() {}
+    override func update() {}
+
+    override func render(ren: long) {
+        var tName = "Transform";
+        var t: TransformComponent = this.entity.getComponent(tName);
+        if (t != 0) {
+            glinda_draw_rect(ren, t.x, t.y, t.width, t.height, this.r, this.g, this.b, 255);
+        }
     }
 }
 
-struct Paddle {
-    var x: int;
-    var y: int;
-    var w: int;
-    var h: int;
+// ==========================================
+// 3. PaddleControllerComponent (パドル操作)
+// ==========================================
+class PaddleControllerComponent: Component {
     var speed: int;
+    var minX: int;
+    var maxX: int;
 
-    constructor(x: int, y: int, w: int, h: int, speed: int) {
-        this.x = x;
-        this.y = y;
-        this.w = w;
-        this.h = h;
+    func PaddleControllerComponent(speed: int, minX: int, maxX: int) {
         this.speed = speed;
+        this.minX = minX;
+        this.maxX = maxX;
+    }
+
+    override func getName() -> long {
+        var n = "PaddleController";
+        return n;
+    }
+
+    override func init() {}
+
+    override func update() {
+        var numkeys: int = 0;
+        var state: long = SDL_GetKeyboardState(numkeys);
+        if (state != 0) {
+            var tName = "Transform";
+            var t: TransformComponent = this.entity.getComponent(tName);
+            if (t != 0) {
+                // Left: 80, A: 4
+                var left_pressed: int = 0;
+                if (state[80] != 0) left_pressed = 1;
+                if (state[4] != 0) left_pressed = 1;
+
+                // Right: 79, D: 7
+                var right_pressed: int = 0;
+                if (state[79] != 0) right_pressed = 1;
+                if (state[7] != 0) right_pressed = 1;
+
+                if (left_pressed == 1) {
+                    t.x = t.x - this.speed;
+                }
+                if (right_pressed == 1) {
+                    t.x = t.x + this.speed;
+                }
+
+                // Clamp
+                if (t.x < this.minX) {
+                    t.x = this.minX;
+                }
+                if (t.x + t.width > this.maxX) {
+                    t.x = this.maxX - t.width;
+                }
+            }
+        }
+    }
+
+    override func render(ren: long) {}
+}
+
+// ==========================================
+// 4. BlockComponent (ブロック情報)
+// ==========================================
+class BlockComponent: Component {
+    var row: int;
+    var col: int;
+    var points: int;
+    var alive: int;
+
+    func BlockComponent(row: int, col: int, points: int) {
+        this.row = row;
+        this.col = col;
+        this.points = points;
+        this.alive = 1;
+    }
+
+    override func getName() -> long {
+        var n = "Block";
+        return n;
+    }
+
+    override func init() {}
+    override func update() {}
+    override func render(ren: long) {}
+}
+
+// ==========================================
+// 5. GameManagerComponent (ゲーム状態管理 & HUD描画)
+// ==========================================
+class GameManagerComponent: Component {
+    var score: int;
+    var lives: int;
+    var gameState: int; // 0: Playing, 1: Game Over, 2: Game Clear
+    var totalBlocks: int;
+    var remainingBlocks: int;
+    var scene: Scene;
+    var ballTrans: TransformComponent;
+    var paddleTrans: TransformComponent;
+
+    func GameManagerComponent(scene: Scene) {
+        this.score = 0;
+        this.lives = 3;
+        this.gameState = 0;
+        this.totalBlocks = 24;
+        this.remainingBlocks = 24;
+        this.scene = scene;
+        this.ballTrans = 0;
+        this.paddleTrans = 0;
+    }
+
+    override func getName() -> long {
+        var n = "GameManager";
+        return n;
+    }
+
+    override func init() {}
+
+    func setReferences(ballT: TransformComponent, padT: TransformComponent) {
+        this.ballTrans = ballT;
+        this.paddleTrans = padT;
+    }
+
+    func onBlockHit(block: BlockComponent) {
+        this.score = this.score + block.points;
+        this.remainingBlocks = this.remainingBlocks - 1;
+        var fmt_hit = "Hit block! Score: %d\n";
+        printf(fmt_hit, this.score);
+
+        if (this.remainingBlocks == 0) {
+            this.gameState = 2;
+            var fmt_clear = ">>> CONGRATULATIONS! ALL BLOCKS CLEARED! Final Score: %d <<<\n";
+            printf(fmt_clear, this.score);
+        }
+    }
+
+    func onBallLost() {
+        this.lives = this.lives - 1;
+        if (this.lives <= 0) {
+            this.gameState = 1;
+            var fmt_over = ">>> GAME OVER! Final Score: %d <<<\n";
+            printf(fmt_over, this.score);
+        } else {
+            var fmt_score = "Score: %d | Lives: %d\n";
+            printf(fmt_score, this.score, this.lives);
+            if (this.ballTrans != 0) {
+                if (this.paddleTrans != 0) {
+                    this.ballTrans.x = this.paddleTrans.x + this.paddleTrans.width / 2 - this.ballTrans.width / 2;
+                } else {
+                    this.ballTrans.x = 315;
+                }
+                this.ballTrans.y = 300;
+                this.ballTrans.vx = 3;
+                this.ballTrans.vy = 0 - 4;
+            }
+        }
+    }
+
+    func restart() {
+        this.score = 0;
+        this.lives = 3;
+        this.gameState = 0;
+        this.remainingBlocks = this.totalBlocks;
+
+        // Revive all blocks in scene
+        var curr: Entity = this.scene.firstEntity;
+        var bName = "Block";
+        while (curr != 0) {
+            var b: BlockComponent = curr.getComponent(bName);
+            if (b != 0) {
+                b.alive = 1;
+                curr.active = 1;
+            }
+            curr = curr.next;
+        }
+
+        if (this.paddleTrans != 0) {
+            this.paddleTrans.x = 280;
+            this.paddleTrans.y = 440;
+        }
+
+        if (this.ballTrans != 0) {
+            this.ballTrans.x = 315;
+            this.ballTrans.y = 300;
+            this.ballTrans.vx = 3;
+            this.ballTrans.vy = 0 - 4;
+        }
+
+        var restart_msg = "Game Restarted!\n";
+        printf(restart_msg);
+        var fmt_score = "Score: %d | Lives: %d\n";
+        printf(fmt_score, this.score, this.lives);
+    }
+
+    override func update() {
+        // Handle restart key 'R' (Scancode 21)
+        if (this.gameState != 0) {
+            var numkeys: int = 0;
+            var state: long = SDL_GetKeyboardState(numkeys);
+            if (state != 0) {
+                if (state[21] != 0) {
+                    this.restart();
+                }
+            }
+        }
+    }
+
+    override func render(ren: long) {
+        // Draw walls / borders (Slate: 51, 65, 85)
+        glinda_draw_rect(ren, 0, 0, 640, 10, 51, 65, 85, 255);
+        glinda_draw_rect(ren, 0, 0, 10, 480, 51, 65, 85, 255);
+        glinda_draw_rect(ren, 630, 0, 10, 480, 51, 65, 85, 255);
+
+        // Draw lives indicators (Red squares: 239, 68, 68)
+        var i: int = 0;
+        while (i < this.lives) {
+            glinda_draw_rect(ren, 20 + i * 16, 462, 10, 10, 239, 68, 68, 255);
+            i = i + 1;
+        }
     }
 }
 
-func main() {
-    var init_res: int = SDL_Init(32);
-    if (init_res < 0) {
-        var err_init = "Failed to initialize SDL2: %s\n";
-        var err_str = SDL_GetError();
-        printf(err_init, err_str);
-        return 1;
+// ==========================================
+// 6. BallPhysicsComponent (ボールの物理・当たり判定)
+// ==========================================
+class BallPhysicsComponent: Component {
+    var scene: Scene;
+    var gameManager: GameManagerComponent;
+    var paddleTrans: TransformComponent;
+
+    func BallPhysicsComponent(scene: Scene, gm: GameManagerComponent, padT: TransformComponent) {
+        this.scene = scene;
+        this.gameManager = gm;
+        this.paddleTrans = padT;
     }
 
-    var win_title = "Dorothy Breakout (SDL2)";
-    var win = SDL_CreateWindow(win_title, 100, 100, 640, 480, 4);
-    if (win == 0) {
-        var err_win = "Failed to create window: %s\n";
-        var err_w_str = SDL_GetError();
-        printf(err_win, err_w_str);
-        SDL_Quit();
-        return 1;
+    override func getName() -> long {
+        var n = "BallPhysics";
+        return n;
     }
 
-    var ren = SDL_CreateRenderer(win, 0 - 1, 0);
-    if (ren == 0) {
-        var err_ren = "Failed to create renderer: %s\n";
-        var err_r_str = SDL_GetError();
-        printf(err_ren, err_r_str);
-        SDL_DestroyWindow(win);
-        SDL_Quit();
-        return 1;
-    }
+    override func init() {}
 
-    var welcome_msg = "=== Dorothy Breakout Game Started! ===\nControls: [Left/Right] or [A/D] to move, [ESC] to quit\n";
-    printf(welcome_msg);
-
-    var paddle: Paddle = Paddle(280, 440, 80, 12, 6);
-    var ball: Ball = Ball(315, 300, 3, 0 - 4, 10);
-
-    var score: int = 0;
-    var lives: int = 3;
-    var game_over: int = 0;
-    var game_clear: int = 0;
-    var running: int = 1;
-    var move_dir: int = 0;
-
-    var block_alive: int[24];
-    var block_x: int[24];
-    var block_y: int[24];
-    var block_w: int = 68;
-    var block_h: int = 18;
-    var blocks_remaining: int = 24;
-
-    var row: int = 0;
-    while (row < 3) {
-        var col: int = 0;
-        while (col < 8) {
-            var idx: int = row * 8 + col;
-            block_alive[idx] = 1;
-            block_x[idx] = 24 + col * 76;
-            block_y[idx] = 50 + row * 26;
-            col = col + 1;
-        }
-        row = row + 1;
-    }
-
-    var event: int[32];
-    var fmt_score = "Score: %d | Lives: %d\n";
-    var fmt_hit = "Hit block! Score: %d\n";
-    var fmt_clear = ">>> CONGRATULATIONS! ALL BLOCKS CLEARED! Final Score: %d <<<\n";
-    var fmt_over = ">>> GAME OVER! Final Score: %d <<<\n";
-
-    printf(fmt_score, score, lives);
-
-    while (running == 1) {
-        while (SDL_PollEvent(event) != 0) {
-            var etype: int = event[0];
-            if (etype == 256) {
-                running = 0;
-            }
-            if (etype == 768) {
-                var key: int = event[5];
-                if (key == 27) {
-                    running = 0;
-                }
-                if (key == 1073741904) {
-                    move_dir = 0 - 1;
-                }
-                if (key == 97) {
-                    move_dir = 0 - 1;
-                }
-                if (key == 1073741903) {
-                    move_dir = 1;
-                }
-                if (key == 100) {
-                    move_dir = 1;
-                }
-                if (key == 114) {
-                    if (game_over == 1) {
-                        game_over = 0;
-                        game_clear = 0;
-                        lives = 3;
-                        score = 0;
-                        blocks_remaining = 24;
-                        var bi: int = 0;
-                        while (bi < 24) {
-                            block_alive[bi] = 1;
-                            bi = bi + 1;
-                        }
-                        ball.x = 315;
-                        ball.y = 300;
-                        ball.vx = 3;
-                        ball.vy = 0 - 4;
-                        var restart_msg = "Game Restarted!\n";
-                        printf(restart_msg);
-                    }
-                    if (game_clear == 1) {
-                        game_over = 0;
-                        game_clear = 0;
-                        lives = 3;
-                        score = 0;
-                        blocks_remaining = 24;
-                        var bi2: int = 0;
-                        while (bi2 < 24) {
-                            block_alive[bi2] = 1;
-                            bi2 = bi2 + 1;
-                        }
-                        ball.x = 315;
-                        ball.y = 300;
-                        ball.vx = 3;
-                        ball.vy = 0 - 4;
-                        var restart_msg2 = "Game Restarted!\n";
-                        printf(restart_msg2);
-                    }
-                }
-            }
-            if (etype == 769) {
-                var ukey: int = event[5];
-                if (ukey == 1073741904) {
-                    if (move_dir < 0) { move_dir = 0; }
-                }
-                if (ukey == 97) {
-                    if (move_dir < 0) { move_dir = 0; }
-                }
-                if (ukey == 1073741903) {
-                    if (move_dir > 0) { move_dir = 0; }
-                }
-                if (ukey == 100) {
-                    if (move_dir > 0) { move_dir = 0; }
-                }
-            }
-        }
-
-        if (game_over == 0) {
-            if (game_clear == 0) {
-                paddle.x = paddle.x + move_dir * paddle.speed;
-                if (paddle.x < 10) {
-                    paddle.x = 10;
-                }
-                if (paddle.x + paddle.w > 630) {
-                    paddle.x = 630 - paddle.w;
-                }
-
-                ball.x = ball.x + ball.vx;
-                ball.y = ball.y + ball.vy;
-
-                if (ball.x <= 10) {
-                    ball.x = 10;
-                    ball.vx = 0 - ball.vx;
-                }
-                if (ball.x + ball.size >= 630) {
-                    ball.x = 630 - ball.size;
-                    ball.vx = 0 - ball.vx;
-                }
-
-                if (ball.y <= 10) {
-                    ball.y = 10;
-                    ball.vy = 0 - ball.vy;
-                }
-
-                if (ball.y + ball.size >= paddle.y) {
-                    if (ball.y <= paddle.y + paddle.h) {
-                        if (ball.x + ball.size >= paddle.x) {
-                            if (ball.x <= paddle.x + paddle.w) {
-                                if (ball.vy > 0) {
-                                    ball.vy = 0 - ball.vy;
-                                    ball.y = paddle.y - ball.size;
-
-                                    var center_p: int = paddle.x + paddle.w / 2;
-                                    var center_b: int = ball.x + ball.size / 2;
-                                    var diff: int = center_b - center_p;
-                                    if (diff < 0 - 15) {
-                                        ball.vx = 0 - 4;
-                                    }
-                                    if (diff > 15) {
-                                        ball.vx = 4;
-                                    }
-                                }
-                            }
-                        }
+    override func update() {
+        if (this.gameManager.gameState == 0) {
+            var tName = "Transform";
+            var t: TransformComponent = this.entity.getComponent(tName);
+            if (t != 0) {
+                // Left wall
+                if (t.x <= 10) {
+                    t.x = 10;
+                    if (t.vx < 0) {
+                        t.vx = 0 - t.vx;
                     }
                 }
 
-                var b_idx: int = 0;
-                while (b_idx < 24) {
-                    if (block_alive[b_idx] == 1) {
-                        var bx: int = block_x[b_idx];
-                        var by: int = block_y[b_idx];
-                        if (ball.x + ball.size >= bx) {
-                            if (ball.x <= bx + block_w) {
-                                if (ball.y + ball.size >= by) {
-                                    if (ball.y <= by + block_h) {
-                                        block_alive[b_idx] = 0;
-                                        ball.vy = 0 - ball.vy;
-                                        blocks_remaining = blocks_remaining - 1;
+                // Right wall
+                if (t.x + t.width >= 630) {
+                    t.x = 630 - t.width;
+                    if (t.vx > 0) {
+                        t.vx = 0 - t.vx;
+                    }
+                }
 
-                                        var b_row: int = b_idx / 8;
-                                        var add_pts: int = (3 - b_row) * 10;
-                                        score = score + add_pts;
-                                        printf(fmt_hit, score);
+                // Top wall
+                if (t.y <= 10) {
+                    t.y = 10;
+                    if (t.vy < 0) {
+                        t.vy = 0 - t.vy;
+                    }
+                }
 
-                                        if (blocks_remaining == 0) {
-                                            game_clear = 1;
-                                            printf(fmt_clear, score);
+                // Paddle collision
+                if (this.paddleTrans != 0) {
+                    var px: int = this.paddleTrans.x;
+                    var py: int = this.paddleTrans.y;
+                    var pw: int = this.paddleTrans.width;
+                    var ph: int = this.paddleTrans.height;
+
+                    if (t.y + t.height >= py) {
+                        if (t.y <= py + ph) {
+                            if (t.x + t.width >= px) {
+                                if (t.x <= px + pw) {
+                                    if (t.vy > 0) {
+                                        t.vy = 0 - t.vy;
+                                        t.y = py - t.height;
+
+                                        var center_p: int = px + pw / 2;
+                                        var center_b: int = t.x + t.width / 2;
+                                        var diff: int = center_b - center_p;
+                                        if (diff < 0 - 15) {
+                                            t.vx = 0 - 4;
+                                        }
+                                        if (diff > 15) {
+                                            t.vx = 4;
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                    b_idx = b_idx + 1;
                 }
 
-                if (ball.y > 480) {
-                    lives = lives - 1;
-                    if (lives <= 0) {
-                        game_over = 1;
-                        printf(fmt_over, score);
-                    } else {
-                        printf(fmt_score, score, lives);
-                        ball.x = paddle.x + paddle.w / 2 - 5;
-                        ball.y = 300;
-                        ball.vx = 3;
-                        ball.vy = 0 - 4;
+                // Block collisions
+                var currE: Entity = this.scene.firstEntity;
+                var bName = "Block";
+                while (currE != 0) {
+                    if (currE.active == 1) {
+                        var blk: BlockComponent = currE.getComponent(bName);
+                        if (blk != 0) {
+                            if (blk.alive == 1) {
+                                var bt: TransformComponent = currE.getComponent(tName);
+                                if (bt != 0) {
+                                    if (t.x + t.width >= bt.x) {
+                                        if (t.x <= bt.x + bt.width) {
+                                            if (t.y + t.height >= bt.y) {
+                                                if (t.y <= bt.y + bt.height) {
+                                                    blk.alive = 0;
+                                                    currE.active = 0;
+                                                    t.vy = 0 - t.vy;
+                                                    this.gameManager.onBlockHit(blk);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
+                    currE = currE.next;
+                }
+
+                // Bottom pit (Life lost)
+                if (t.y > 480) {
+                    this.gameManager.onBallLost();
                 }
             }
         }
-
-        SDL_SetRenderDrawColor(ren, 15, 23, 42, 255);
-        SDL_RenderClear(ren);
-
-        draw_rect(ren, 0, 0, 640, 10, 51, 65, 85);
-        draw_rect(ren, 0, 0, 10, 480, 51, 65, 85);
-        draw_rect(ren, 630, 0, 10, 480, 51, 65, 85);
-
-        var render_i: int = 0;
-        while (render_i < 24) {
-            if (block_alive[render_i] == 1) {
-                var r_row: int = render_i / 8;
-                if (r_row == 0) {
-                    draw_rect(ren, block_x[render_i], block_y[render_i], block_w, block_h, 239, 68, 68);
-                }
-                if (r_row == 1) {
-                    draw_rect(ren, block_x[render_i], block_y[render_i], block_w, block_h, 245, 158, 11);
-                }
-                if (r_row == 2) {
-                    draw_rect(ren, block_x[render_i], block_y[render_i], block_w, block_h, 16, 185, 129);
-                }
-            }
-            render_i = render_i + 1;
-        }
-
-        draw_rect(ren, paddle.x, paddle.y, paddle.w, paddle.h, 56, 189, 248);
-
-        draw_rect(ren, ball.x, ball.y, ball.size, ball.size, 255, 255, 255);
-
-        var l_idx: int = 0;
-        while (l_idx < lives) {
-            draw_rect(ren, 20 + l_idx * 16, 462, 10, 10, 239, 68, 68);
-            l_idx = l_idx + 1;
-        }
-
-        SDL_RenderPresent(ren);
-
-        SDL_Delay(16);
     }
+
+    override func render(ren: long) {}
+}
+
+// ==========================================
+// Main Function
+// ==========================================
+func main() -> int {
+    var welcome_msg = "=== Dorothy Breakout Game Started (Glinda ECS Framework)! ===\nControls: [Left/Right] or [A/D] to move, [ESC] to quit, [R] to restart\n";
+    printf(welcome_msg);
+
+    var app: GlindaApp = GlindaApp(640, 480);
+    app.setBackgroundColor(15, 23, 42); // Dark slate background
+
+    var title = "Dorothy Breakout - Glinda ECS Framework";
+    var err: int = app.initSDL(title);
+    if (err != 0) {
+        return 1;
+    }
+
+    var scene: Scene = Scene();
+
+    // 1. GameManager Entity
+    var gmEntity: Entity = Entity();
+    var gm: GameManagerComponent = GameManagerComponent(scene);
+    gmEntity.addComponent(gm);
+    scene.addEntity(gmEntity);
+
+    // 2. Paddle Entity
+    var paddleEntity: Entity = Entity();
+    var padTrans: TransformComponent = TransformComponent(280, 440, 0, 0, 80, 12);
+    var padCtrl: PaddleControllerComponent = PaddleControllerComponent(6, 10, 630);
+    var padRender: RectRendererComponent = RectRendererComponent(56, 189, 248); // Cyan
+    paddleEntity.addComponent(padTrans);
+    paddleEntity.addComponent(padCtrl);
+    paddleEntity.addComponent(padRender);
+    scene.addEntity(paddleEntity);
+
+    // 3. Ball Entity
+    var ballEntity: Entity = Entity();
+    var ballTrans: TransformComponent = TransformComponent(315, 300, 3, 0 - 4, 10, 10);
+    var ballPhysics: BallPhysicsComponent = BallPhysicsComponent(scene, gm, padTrans);
+    var ballRender: RectRendererComponent = RectRendererComponent(255, 255, 255); // White
+    ballEntity.addComponent(ballTrans);
+    ballEntity.addComponent(ballPhysics);
+    ballEntity.addComponent(ballRender);
+    scene.addEntity(ballEntity);
+
+    // Give references to GameManager
+    gm.setReferences(ballTrans, padTrans);
+
+    // 4. Brick Entities (3 rows x 8 columns = 24 bricks)
+    var row: int = 0;
+    while (row < 3) {
+        var col: int = 0;
+        while (col < 8) {
+            var bx: int = 24 + col * 76;
+            var by: int = 50 + row * 26;
+            var pts: int = (3 - row) * 10;
+
+            var r: int = 16;
+            var g: int = 185;
+            var b: int = 129; // Green (row 2)
+            if (row == 0) {
+                r = 239;
+                g = 68;
+                b = 68; // Red (row 0)
+            }
+            if (row == 1) {
+                r = 245;
+                g = 158;
+                b = 11; // Orange (row 1)
+            }
+
+            var blockEntity: Entity = Entity();
+            var bTrans: TransformComponent = TransformComponent(bx, by, 0, 0, 68, 18);
+            var bComp: BlockComponent = BlockComponent(row, col, pts);
+            var bRender: RectRendererComponent = RectRendererComponent(r, g, b);
+
+            blockEntity.addComponent(bTrans);
+            blockEntity.addComponent(bComp);
+            blockEntity.addComponent(bRender);
+            scene.addEntity(blockEntity);
+
+            col = col + 1;
+        }
+        row = row + 1;
+    }
+
+    var fmt_score = "Score: %d | Lives: %d\n";
+    printf(fmt_score, gm.score, gm.lives);
+
+    app.setScene(scene);
+    app.run();
 
     var exit_msg = "Thanks for playing Dorothy Breakout!\n";
     printf(exit_msg);
-
-    SDL_DestroyRenderer(ren);
-    SDL_DestroyWindow(win);
-    SDL_Quit();
 
     return 0;
 }

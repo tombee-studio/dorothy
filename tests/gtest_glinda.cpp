@@ -455,3 +455,35 @@ TEST(GlindaTest, SceneEntityBatchExecution) {
       "}\n";
   EXPECT_EQ(run_llvm(src), 36);
 }
+
+// 5. Nested Member Access (this.obj.field)
+TEST(GlindaTest, NestedMemberAccess) {
+  std::string src =
+      "class Data {\n"
+      "    var value: int;\n"
+      "    func Data(v: int) {\n"
+      "        this.value = v;\n"
+      "    }\n"
+      "}\n"
+      "class Container {\n"
+      "    var data: Data;\n"
+      "    func Container(d: Data) {\n"
+      "        this.data = d;\n"
+      "    }\n"
+      "    func getValue() -> int {\n"
+      "        return this.data.value;\n"
+      "    }\n"
+      "    func addValue(extra: int) {\n"
+      "        this.data.value = this.data.value + extra;\n"
+      "    }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    var d: Data = Data(42);\n"
+      "    var c: Container = Container(d);\n"
+      "    var v1: int = c.getValue();\n"
+      "    c.addValue(8);\n"
+      "    return v1 + c.data.value; // 42 + 50 = 92\n"
+      "}\n";
+  EXPECT_EQ(run_llvm(src), 92);
+}
+

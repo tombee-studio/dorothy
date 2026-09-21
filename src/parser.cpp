@@ -2,6 +2,7 @@
 #include <filesystem>
 #include "../include/lexer.hpp"
 #include "../include/parser.hpp"
+#include "../include/utils.hpp"
 
 namespace fs = std::filesystem;
 
