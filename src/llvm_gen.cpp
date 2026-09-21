@@ -543,8 +543,11 @@ static void emit_all_classes(LLVMGenCtx& ctx) {
     ctx.classes_emitted = true;
 
     if (!g_class_defs.empty()) {
-        // Declare malloc
-        ctx.out << "declare ptr @malloc(i64)\n\n";
+        // Declare malloc if not already declared by C header
+        if (!ctx.c_imported_funcs.count("malloc")) {
+            ctx.out << "declare ptr @malloc(i64)\n\n";
+            ctx.c_imported_funcs["malloc"] = {"ptr", {"i64"}, false};
+        }
 
         // Class struct type definitions
         for (auto& [cname, cdef] : g_class_defs) {
@@ -1704,27 +1707,68 @@ string ClassInit::llvm_rval(LLVMGenCtx& ctx) {
     return ret_i64;
 }
 
+static string resolve_expr_class_name(LLVMGenCtx& ctx, Expression* expr) {
+    if (!expr) return "";
+    if (dynamic_cast<ThisExpr*>(expr)) {
+        return ctx.this_class;
+    }
+    auto* ma = dynamic_cast<MemberAccess*>(expr);
+    if (ma) {
+        string parent_class = resolve_expr_class_name(ctx, ma->getObject());
+        if (!parent_class.empty() && g_class_defs.count(parent_class)) {
+            int idx = g_class_defs[parent_class].fieldIndex(ma->getMember());
+            if (idx >= 0) {
+                const auto& field = g_class_defs[parent_class].fields[idx];
+                if (field.type == VarType::CLASS) {
+                    return field.struct_name;
+                }
+            }
+        }
+        return "";
+    }
+    auto* var_expr = dynamic_cast<Variable*>(expr);
+    if (var_expr) {
+        const string& varname = var_expr->getVarName();
+        if (varname == "$this" || varname == "this") return ctx.this_class;
+        auto it = ctx.class_var_types.find(varname);
+        if (it != ctx.class_var_types.end()) return it->second;
+    }
+    auto* cme = dynamic_cast<CallMethodExp*>(expr);
+    if (cme) {
+        string parent_class = resolve_expr_class_name(ctx, cme->getObject());
+        if (!parent_class.empty() && g_class_defs.count(parent_class)) {
+            auto* minfo = g_class_defs[parent_class].getMethod(cme->getMethodName());
+            if (minfo && minfo->ret_type == VarType::CLASS) {
+                return minfo->ret_type_name;
+            }
+        }
+    }
+    auto* ci = dynamic_cast<ClassInit*>(expr);
+    if (ci) {
+        return ci->getClassName();
+    }
+    return "";
+}
+
 // ===== CallMethodExp =====
 
 string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
     string obj_ptr;
-    string cname;
+    string cname = resolve_expr_class_name(ctx, _object);
+
     auto* this_expr = dynamic_cast<ThisExpr*>(_object);
-    if (this_expr || _object->getVarName() == "$this" || _object->getVarName() == "this") {
+    auto* var_expr = dynamic_cast<Variable*>(_object);
+    if (this_expr || (var_expr && (var_expr->getVarName() == "$this" || var_expr->getVarName() == "this"))) {
         obj_ptr = ctx.this_ptr_reg;
-        cname = ctx.this_class;
+    } else if (var_expr && ctx.class_var_types.count(var_expr->getVarName())) {
+        const string& varname = var_expr->getVarName();
+        string loaded_ptr = ctx.fresh("obj.ptr");
+        ctx.out << "  " << loaded_ptr << " = load ptr, ptr " << ctx.vars[varname] << "\n";
+        obj_ptr = loaded_ptr;
     } else {
-        const string& varname = _object->getVarName();
-        if (!varname.empty() && ctx.class_var_types.count(varname)) {
-            cname = ctx.class_var_types[varname];
-            string loaded_ptr = ctx.fresh("obj.ptr");
-            ctx.out << "  " << loaded_ptr << " = load ptr, ptr " << ctx.vars[varname] << "\n";
-            obj_ptr = loaded_ptr;
-        } else {
-            string obj_i64 = _object->llvm_rval(ctx);
-            obj_ptr = ctx.fresh("obj.ptr");
-            ctx.out << "  " << obj_ptr << " = inttoptr i64 " << obj_i64 << " to ptr\n";
-        }
+        string obj_i64 = _object->llvm_rval(ctx);
+        obj_ptr = ctx.fresh("obj.ptr");
+        ctx.out << "  " << obj_ptr << " = inttoptr i64 " << obj_i64 << " to ptr\n";
     }
 
     if (cname.empty() || !g_class_defs.count(cname)) {

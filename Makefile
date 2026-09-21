@@ -27,6 +27,7 @@ test:
 			tests/gtest_integration.cpp \
 			tests/gtest_struct.cpp \
 			tests/gtest_class.cpp \
+			tests/gtest_glinda.cpp \
 			tests/gtest_typechecker.cpp \
 			obj/*.o $(GTEST_LIBS) -o dist/test_runner
 		./dist/test_runner

@@ -79,6 +79,42 @@ void Parser::parse_top_level(vector<Token> &tokens, const string &base_dir) {
     _pos = 0;
     _base_dir = base_dir;
 
+    // Pre-scan for forward references of struct and class names
+    for (int i = 0; i < (int)tokens.size(); i++) {
+        if (tokens[i].type == Token::KW_CLASS) {
+            if (i + 1 < (int)tokens.size() && tokens[i + 1].type == Token::TK_ID) {
+                string cname = tokens[i + 1].id;
+                if (!_class_defs.count(cname)) {
+                    ClassDefInfo cdef;
+                    cdef.name = cname;
+                    _class_defs[cname] = cdef;
+                    g_class_defs[cname] = cdef;
+                }
+            }
+        } else if (tokens[i].type == Token::KW_ABSTRACT) {
+            if (i + 2 < (int)tokens.size() && tokens[i + 1].type == Token::KW_CLASS && tokens[i + 2].type == Token::TK_ID) {
+                string cname = tokens[i + 2].id;
+                if (!_class_defs.count(cname)) {
+                    ClassDefInfo cdef;
+                    cdef.name = cname;
+                    cdef.is_abstract = true;
+                    _class_defs[cname] = cdef;
+                    g_class_defs[cname] = cdef;
+                }
+            }
+        } else if (tokens[i].type == Token::KW_STRUCT) {
+            if (i + 1 < (int)tokens.size() && tokens[i + 1].type == Token::TK_ID) {
+                string sname = tokens[i + 1].id;
+                if (!_struct_defs.count(sname)) {
+                    StructDefInfo sdef;
+                    sdef.name = sname;
+                    _struct_defs[sname] = sdef;
+                    g_struct_defs[sname] = sdef;
+                }
+            }
+        }
+    }
+
     while (consume(tokens, Token::TK_EOF).type == Token::NONE) {
         if (tokens[_pos].type == Token::KW_STRUCT) {
             parse_struct_def(tokens);
@@ -126,6 +162,7 @@ vector<Function *> Parser::parse(vector<Token> &tokens, const string &base_dir) 
     g_class_defs.clear();
     _functions.clear();
     _defined_functions.clear();
+    _defined_types.clear();
     _loaded_files.clear();
     _base_dir = base_dir;
 
@@ -146,6 +183,7 @@ vector<Function *> Parser::parse_file(const string &filepath) {
     g_class_defs.clear();
     _functions.clear();
     _defined_functions.clear();
+    _defined_types.clear();
     _loaded_files.clear();
     _loaded_files.insert(canonical_path);
 
@@ -169,11 +207,15 @@ void Parser::parse_struct_def(vector<Token> &tokens) {
     if (name_tok.type == Token::NONE)
         throw ParseError("expected struct name", tokens[_pos]);
 
+    string struct_name = name_tok.id;
+    if (_defined_types.count(struct_name))
+        throw ParseError("redefinition of type '" + struct_name + "'", name_tok);
+
     if (consume(tokens, (Token::Type)'{').type == Token::NONE)
         throw ParseError("expected '{' in struct definition", tokens[_pos]);
 
     StructDefInfo sdef;
-    sdef.name = name_tok.id;
+    sdef.name = struct_name;
 
     while (tokens[_pos].type != (Token::Type)'}') {
         if (tokens[_pos].type == Token::KW_VAR) {
@@ -222,8 +264,9 @@ void Parser::parse_struct_def(vector<Token> &tokens) {
     if (consume(tokens, (Token::Type)'}').type == Token::NONE)
         throw ParseError("expected '}' to close struct", tokens[_pos]);
 
-    _struct_defs[name_tok.id] = sdef;
-    g_struct_defs[name_tok.id] = sdef;
+    _struct_defs[struct_name] = sdef;
+    g_struct_defs[struct_name] = sdef;
+    _defined_types.insert(struct_name);
 }
 
 void Parser::parse_class_def(vector<Token> &tokens) {
@@ -241,7 +284,7 @@ void Parser::parse_class_def(vector<Token> &tokens) {
         throw ParseError("expected class name", tokens[_pos]);
 
     string class_name = name_tok.id;
-    if (_class_defs.count(class_name) || _struct_defs.count(class_name))
+    if (_defined_types.count(class_name))
         throw ParseError("redefinition of type '" + class_name + "'", name_tok);
 
     ClassDefInfo cdef;
@@ -461,6 +504,7 @@ void Parser::parse_class_def(vector<Token> &tokens) {
 
     _class_defs[class_name] = cdef;
     g_class_defs[class_name] = cdef;
+    _defined_types.insert(class_name);
 }
 
 Function *Parser::parse_function(vector<Token> &tokens) {
