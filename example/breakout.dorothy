@@ -92,8 +92,7 @@ class PaddleControllerComponent: Component {
     override func init() {}
 
     override func update() {
-        var numkeys: int = 0;
-        var state: long = SDL_GetKeyboardState(numkeys);
+        var state: long = SDL_GetKeyboardState(0);
         if (state != 0) {
             var tName = "Transform";
             var t: TransformComponent = this.entity.getComponent(tName);
@@ -265,8 +264,7 @@ class GameManagerComponent: Component {
     override func update() {
         // Handle restart key 'R' (Scancode 21)
         if (this.gameState != 0) {
-            var numkeys: int = 0;
-            var state: long = SDL_GetKeyboardState(numkeys);
+            var state: long = SDL_GetKeyboardState(0);
             if (state != 0) {
                 if (state[21] != 0) {
                     this.restart();

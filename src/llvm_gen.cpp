@@ -1558,7 +1558,7 @@ VarType ArrayIndex::llvm_declared_type(LLVMGenCtx& ctx) const {
     if (it != ctx.array_elem_types.end()) {
         return it->second;
     }
-    return VarType::LONG;
+    return VarType::CHAR;
 }
 
 VarType ArrayIndex::llvm_etype(LLVMGenCtx& ctx) const {
@@ -1589,6 +1589,11 @@ string ArrayIndex::llvm_rval(LLVMGenCtx& ctx) {
             return llvm_promote_to_double(ctx, loaded, VarType::FLOAT);
         }
         return loaded;
+    }
+    if (elem_type == VarType::CHAR) {
+        string reg = ctx.fresh("zext");
+        ctx.out << "  " << reg << " = zext i8 " << loaded << " to i64\n";
+        return reg;
     }
     if (elem_type != VarType::LONG) {
         string reg = ctx.fresh("sext");

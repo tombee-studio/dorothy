@@ -2,7 +2,7 @@
 import "stdio.h";
 import "string.h";
 import "SDL2/SDL.h";
-import "../lib/glinda/glinda.dorothy";
+import "../frameworks/glinda/glinda.dorothy";
 
 // ==========================================
 // 1. TransformComponent (位置・速度・サイズ)
