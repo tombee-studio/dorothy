@@ -1,0 +1,51 @@
+import "stdio.h";
+
+struct Point {
+    var x: int;
+    var y: int;
+
+    constructor(px: int, py: int) {
+        this.x = px;
+        this.y = py;
+    }
+}
+
+struct Rect {
+    var origin: Point;
+    var width: int;
+    var height: int;
+
+    constructor(x: int, y: int, w: int, h: int) {
+        this.origin.x = x;
+        this.origin.y = y;
+        this.width = w;
+        this.height = h;
+    }
+}
+
+func move_point(p: Point, dx: int, dy: int) -> Point {
+    var res: Point = Point(p.x + dx, p.y + dy);
+    return res;
+}
+
+func calc_area(r: Rect) {
+    return r.width * r.height;
+}
+
+func main() {
+    var p: Point = Point(10, 20);
+    var moved: Point = move_point(p, 5, -3);
+
+    var r: Rect = Rect(moved.x, moved.y, 30, 40);
+    var area: int = calc_area(r);
+
+    var fmt1 = "Point: (%d, %d)\n";
+    var fmt2 = "Moved Point: (%d, %d)\n";
+    var fmt3 = "Rect origin: (%d, %d), size: %dx%d, area: %d\n";
+
+    printf(fmt1, p.x, p.y);
+    printf(fmt2, moved.x, moved.y);
+    printf(fmt3, r.origin.x, r.origin.y, r.width, r.height, area);
+
+    return 0;
+}
