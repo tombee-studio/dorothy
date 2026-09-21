@@ -7,6 +7,7 @@ A simple programming language that compiles to a custom bytecode VM or LLVM IR.
 - g++ (C++17 or later)
 - clang (for LLVM IR compilation)
 - make
+- sdl2 (optional, required for Glinda Framework / 2D games)
 
 ## Installation
 
@@ -347,15 +348,65 @@ func main() {
 dorothy digit.txt; echo $?   # 1
 ```
 
+## Glinda Framework
+
+Glinda is an Entity-Component System (ECS) framework for Dorothy that enables building 2D games and interactive graphical applications using SDL2.
+
+### Prerequisites & Installation
+
+To run Glinda applications, install SDL2 and pkg-config:
+
+```sh
+# macOS (Homebrew)
+brew install sdl2 pkg-config
+
+# Ubuntu / Debian
+sudo apt-get install -y libsdl2-dev pkg-config
+
+# Fedora / RHEL
+sudo dnf install -y SDL2-devel pkgconf-pkg-config
+```
+
+### Usage
+
+Import Glinda and SDL2 in your Dorothy source code:
+
+```dorothy
+import "stdio.h";
+import "string.h";
+import "SDL2/SDL.h";
+import "../frameworks/glinda/glinda.dorothy";
+```
+
+### Running Examples
+
+To compile and run the provided Breakout game example:
+
+```sh
+# 1. Emit LLVM IR and compile with Clang linking SDL2
+dorothy --emit-llvm example/breakout.dorothy | clang -x ir - -o breakout $(pkg-config --cflags --libs sdl2)
+
+# 2. Run the executable
+./breakout
+```
+
+Or run the ECS feature demo:
+
+```sh
+dorothy --emit-llvm example/glinda_demo.dorothy | clang -x ir - -o glinda_demo $(pkg-config --cflags --libs sdl2)
+./glinda_demo
+```
+
 ## Project Structure
 
 ```
 dorothy/
 ├── cli/        # CLI entry point (main.cpp)
+├── frameworks/ # High-level frameworks (e.g., Glinda ECS framework)
 ├── include/    # Headers (lexer, parser, AST, codegen)
 ├── src/        # Implementation (lexer, parser, AST, VM, LLVM codegen)
-├── script/     # Example programs
-├── unittest/   # Unit tests
+├── example/    # Example programs (Breakout, Glinda demo, etc.)
+├── tests/      # Unit & integration tests (Google Test)
 ├── Lib/        # Built static library
 ├── obj/        # Object files
 └── dist/       # Built binary
@@ -368,3 +419,4 @@ dorothy/
 ## License
 
 MIT License
+
