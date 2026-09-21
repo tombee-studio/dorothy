@@ -434,6 +434,157 @@ static string llvm_promote_to_double(LLVMGenCtx& ctx, const string& val,
     return val;
 }
 
+// ===== Class emission helpers =====
+
+static void emit_class_constructor(LLVMGenCtx& ctx, const string& cname, const ClassDefInfo& cdef) {
+    if (!cdef.constructor) return;
+    ctx.vars.clear();
+    ctx.var_types.clear();
+    ctx.const_vars.clear();
+    ctx.struct_field_ptrs.clear();
+    ctx.struct_var_types.clear();
+    ctx.struct_subfield_types.clear();
+    ctx.class_var_types.clear();
+    ctx.this_var.clear();
+    ctx.this_ptr_reg = "%this";
+    ctx.this_class = cname;
+    ctx.sret_field_ptrs.clear();
+    ctx.current_ret_struct.clear();
+    ctx.terminated = false;
+    ctx.current_function = cname + ".constructor";
+
+    vector<pair<string, string>> fn_params;
+    fn_params.push_back({"ptr", "%this"});
+    int flat_idx = 0;
+    for (auto& p : cdef.constructor->params) {
+        fn_params.push_back({llvm_type_str(p.second), "%param." + to_string(flat_idx++)});
+    }
+
+    ctx.out << "define void @" << cname << ".constructor(";
+    for (int i = 0; i < (int)fn_params.size(); i++) {
+        if (i > 0) ctx.out << ", ";
+        ctx.out << fn_params[i].first << " " << fn_params[i].second;
+    }
+    ctx.out << ") {\nentry:\n";
+
+    // Allocate and store parameters
+    flat_idx = 0;
+    for (auto& p : cdef.constructor->params) {
+        int n = ctx.counter++;
+        string tstr = llvm_type_str(p.second);
+        string ptr = "%" + p.first + ".addr." + to_string(n);
+        ctx.out << "  " << ptr << " = alloca " << tstr << "\n";
+        ctx.out << "  store " << tstr << " %param." << to_string(flat_idx++) << ", ptr " << ptr << "\n";
+        ctx.vars[p.first] = ptr;
+        ctx.var_types[p.first] = p.second;
+    }
+
+    cdef.constructor->body->llvm_emit(ctx);
+
+    if (!ctx.terminated) {
+        ctx.out << "  ret void\n";
+    }
+    ctx.out << "}\n\n";
+}
+
+static void emit_class_method(LLVMGenCtx& ctx, const string& cname, MethodInfo* m) {
+    if (m->is_abstract || !m->body) return;
+    ctx.vars.clear();
+    ctx.var_types.clear();
+    ctx.const_vars.clear();
+    ctx.struct_field_ptrs.clear();
+    ctx.struct_var_types.clear();
+    ctx.struct_subfield_types.clear();
+    ctx.class_var_types.clear();
+    ctx.this_var.clear();
+    ctx.this_ptr_reg = "%this";
+    ctx.this_class = cname;
+    ctx.sret_field_ptrs.clear();
+    ctx.current_ret_struct = (m->ret_type == VarType::STRUCT) ? m->ret_type_name : "";
+    ctx.terminated = false;
+    ctx.current_function = cname + "." + m->name;
+
+    string ret_llvm = (m->ret_type == VarType::STRUCT) ? "void" : "i64";
+
+    vector<pair<string, string>> fn_params;
+    fn_params.push_back({"ptr", "%this"});
+    int flat_idx = 0;
+    for (auto* p : m->params) {
+        fn_params.push_back({llvm_type_str(p->getType()), "%param." + to_string(flat_idx++)});
+    }
+
+    ctx.out << "define " << ret_llvm << " @" << cname << "." << m->name << "(";
+    for (int i = 0; i < (int)fn_params.size(); i++) {
+        if (i > 0) ctx.out << ", ";
+        ctx.out << fn_params[i].first << " " << fn_params[i].second;
+    }
+    ctx.out << ") {\nentry:\n";
+
+    // Allocate and store parameters
+    flat_idx = 0;
+    for (auto* p : m->params) {
+        p->llvm_param(ctx, "%param." + to_string(flat_idx++));
+    }
+
+    m->body->llvm_emit(ctx);
+
+    if (!ctx.terminated) {
+        if (m->ret_type == VarType::STRUCT) {
+            ctx.out << "  ret void\n";
+        } else {
+            ctx.out << "  ret " << ret_llvm << " 0\n";
+        }
+    }
+    ctx.out << "}\n\n";
+}
+
+static void emit_all_classes(LLVMGenCtx& ctx) {
+    if (ctx.classes_emitted) return;
+    ctx.classes_emitted = true;
+
+    if (!g_class_defs.empty()) {
+        // Declare malloc
+        ctx.out << "declare ptr @malloc(i64)\n\n";
+
+        // Class struct type definitions
+        for (auto& [cname, cdef] : g_class_defs) {
+            ctx.out << "%class." << cname << " = type { ptr";
+            for (auto& f : cdef.fields) {
+                ctx.out << ", " << llvm_type_str(f.type);
+            }
+            ctx.out << " }\n";
+        }
+        ctx.out << "\n";
+
+        // Class vtables
+        for (auto& [cname, cdef] : g_class_defs) {
+            if (cdef.is_abstract) continue;
+            int n_methods = (int)cdef.vtable_methods.size();
+            if (n_methods == 0) continue;
+            ctx.out << "@vtable." << cname << " = global [" << n_methods << " x ptr] [";
+            for (int i = 0; i < n_methods; i++) {
+                if (i > 0) ctx.out << ", ";
+                auto* m = cdef.vtable_methods[i];
+                ctx.out << "ptr @" << m->class_name << "." << m->name;
+            }
+            ctx.out << "]\n";
+        }
+        ctx.out << "\n";
+
+        // Constructors and methods
+        for (auto& [cname, cdef] : g_class_defs) {
+            if (cdef.constructor) {
+                emit_class_constructor(ctx, cname, cdef);
+            }
+            for (auto& [mname, minfo] : cdef.methods) {
+                if (minfo->class_name == cname && !minfo->is_abstract) {
+                    emit_class_method(ctx, cname, minfo);
+                }
+            }
+        }
+    }
+}
+
 // ===== Expression base =====
 
 string Expression::llvm_lval(LLVMGenCtx& ctx) {
@@ -443,6 +594,19 @@ string Expression::llvm_lval(LLVMGenCtx& ctx) {
 // ===== DeclVar =====
 
 void DeclVar::llvm_emit(LLVMGenCtx& ctx) {
+    if (_type == VarType::CLASS) {
+        if (!g_class_defs.count(_struct_name))
+            throw CompileError(("undefined class type: " + _struct_name).c_str());
+        int n = ctx.counter++;
+        string ptr = "%" + _id + ".addr." + to_string(n);
+        ctx.out << "  " << ptr << " = alloca ptr\n";
+        ctx.out << "  store ptr null, ptr " << ptr << "\n";
+        ctx.vars[_id] = ptr;
+        ctx.var_types[_id] = VarType::CLASS;
+        ctx.class_var_types[_id] = _struct_name;
+        if (_is_const) ctx.const_vars.insert(_id);
+        return;
+    }
     if (_type == VarType::STRUCT) {
         if (!g_struct_defs.count(_struct_name))
             throw CompileError(("undefined struct type: " + _struct_name).c_str());
@@ -470,31 +634,40 @@ void DeclVar::llvm_emit(LLVMGenCtx& ctx) {
 void InitializedDeclVar::llvm_emit(LLVMGenCtx& ctx) {
     // ===== Type inference: resolve INFERRED before allocating =====
     if (_type == VarType::INFERRED) {
-        // Struct-returning function call: var p = makePoint();
-        auto* cfe = dynamic_cast<CallFuncExp*>(_init);
-        if (cfe && ctx.func_return_struct.count(cfe->getId())) {
-            _type = VarType::STRUCT;
-            _struct_name = ctx.func_return_struct[cfe->getId()];
-        }
-        // Variable holding a struct: var p2 = p1;
-        else if (auto* var_expr = dynamic_cast<Variable*>(_init)) {
-            auto sit = ctx.struct_var_types.find(var_expr->getVarName());
-            if (sit != ctx.struct_var_types.end()) {
+        auto* ci = dynamic_cast<ClassInit*>(_init);
+        if (ci) {
+            _type = VarType::CLASS;
+            _struct_name = ci->getClassName();
+        } else if (auto* cfe = dynamic_cast<CallFuncExp*>(_init)) {
+            if (ctx.func_return_struct.count(cfe->getId())) {
                 _type = VarType::STRUCT;
-                _struct_name = sit->second;
+                _struct_name = ctx.func_return_struct[cfe->getId()];
+            }
+        } else if (auto* var_expr = dynamic_cast<Variable*>(_init)) {
+            if (ctx.class_var_types.count(var_expr->getVarName())) {
+                _type = VarType::CLASS;
+                _struct_name = ctx.class_var_types[var_expr->getVarName()];
+            } else if (ctx.struct_var_types.count(var_expr->getVarName())) {
+                _type = VarType::STRUCT;
+                _struct_name = ctx.struct_var_types[var_expr->getVarName()];
             } else {
-                // Use canonical type: LONG for integers, DOUBLE for floats
                 _type = _init->llvm_etype(ctx);
             }
-        }
-        // Scalar expression: integer → LONG, float → DOUBLE
-        else {
+        } else {
             _type = _init->llvm_etype(ctx);
         }
     }
     // ===== End type inference =====
 
     DeclVar::llvm_emit(ctx);  // alloca + zero-init + type/const tracking
+
+    if (_type == VarType::CLASS) {
+        string val = _init->llvm_rval(ctx);
+        string ptr_val = ctx.fresh("init.ptr");
+        ctx.out << "  " << ptr_val << " = inttoptr i64 " << val << " to ptr\n";
+        ctx.out << "  store ptr " << ptr_val << ", ptr " << ctx.vars[_id] << "\n";
+        return;
+    }
 
     if (_type == VarType::STRUCT) {
         // struct-returning function call: call void @func(ptr %sret..., args...)
@@ -624,6 +797,9 @@ void DeclVar::llvm_param(LLVMGenCtx& ctx, const string& param_reg) {
     ctx.out << "  store " << tstr << " " << param_reg << ", ptr " << ptr << "\n";
     ctx.vars[_id] = ptr;
     ctx.var_types[_id] = _type;
+    if (_type == VarType::CLASS) {
+        ctx.class_var_types[_id] = _struct_name;
+    }
 }
 
 // ===== DeclArrayVar =====
@@ -844,8 +1020,14 @@ prepareCallArgs(LLVMGenCtx& ctx, const std::string& id,
             VarType src_c = args[i]->llvm_etype(ctx);
             if (pit != ctx.func_param_info.end() && i < (int)pit->second.size()) {
                 VarType tgt = pit->second[i].type;
-                val = llvm_coerce(ctx, val, src_c, tgt);
-                result.push_back({llvm_type_str(tgt), val});
+                if (tgt == VarType::CLASS) {
+                    string r = ctx.fresh("arg.class.ptr");
+                    ctx.out << "  " << r << " = inttoptr i64 " << val << " to ptr\n";
+                    result.push_back({"ptr", r});
+                } else {
+                    val = llvm_coerce(ctx, val, src_c, tgt);
+                    result.push_back({llvm_type_str(tgt), val});
+                }
             } else {
                 result.push_back({"i64", val});
             }
@@ -906,13 +1088,18 @@ void Function::llvm_pre_register(LLVMGenCtx& ctx) {
 }
 
 void Function::llvm_emit(LLVMGenCtx& ctx) {
+    emit_all_classes(ctx);
+
     ctx.vars.clear();
     ctx.var_types.clear();
     ctx.const_vars.clear();
     ctx.struct_field_ptrs.clear();
     ctx.struct_var_types.clear();
     ctx.struct_subfield_types.clear();
+    ctx.class_var_types.clear();
     ctx.this_var.clear();
+    ctx.this_ptr_reg.clear();
+    ctx.this_class.clear();
     ctx.sret_field_ptrs.clear();
     ctx.current_ret_struct = _ret_struct_name;
     ctx.terminated = false;
@@ -1028,8 +1215,14 @@ string Assign::llvm_rval(LLVMGenCtx& ctx) {
         throw CompileError(("cannot assign to constant: " + varname).c_str());
     string ptr = _leftside->llvm_lval(ctx);
     string val = _expr->llvm_rval(ctx);  // in canonical form
-    VarType src_canonical = _expr->llvm_etype(ctx);
     VarType tgt_declared = _leftside->llvm_declared_type(ctx);
+    if (tgt_declared == VarType::CLASS) {
+        string ptr_val = ctx.fresh("assign.ptr");
+        ctx.out << "  " << ptr_val << " = inttoptr i64 " << val << " to ptr\n";
+        ctx.out << "  store ptr " << ptr_val << ", ptr " << ptr << "\n";
+        return val;
+    }
+    VarType src_canonical = _expr->llvm_etype(ctx);
     string tstr = llvm_type_str(tgt_declared);
     string store_val = llvm_coerce(ctx, val, src_canonical, tgt_declared);
     ctx.out << "  store " << tstr << " " << store_val << ", ptr " << ptr << "\n";
@@ -1049,7 +1242,7 @@ static string emitBinOp(LLVMGenCtx& ctx, Expression* left, Expression* right,
         if (lt != VarType::DOUBLE) l = llvm_promote_to_double(ctx, l, lt);
         if (rt != VarType::DOUBLE) r = llvm_promote_to_double(ctx, r, rt);
         string reg = ctx.fresh();
-        ctx.out << "  " << reg << " = " << fop << " double " << l << ", " << r << "\n";
+        ctx.out << "  " << reg << " = fop " << "double " << l << ", " << r << "\n";
         return reg;
     }
     string reg = ctx.fresh();
@@ -1140,6 +1333,41 @@ static VarType member_field_type(LLVMGenCtx& ctx, const string& varname,
 
 string MemberAccess::llvm_rval(LLVMGenCtx& ctx) {
     string varname = resolve_struct_var(ctx, _object->getVarName());
+
+    // Check if it's a class member access
+    string cname;
+    string obj_ptr;
+    if (_object->getVarName() == "$this" || _object->getVarName() == "this") {
+        cname = ctx.this_class;
+        obj_ptr = ctx.this_ptr_reg;
+    } else if (!varname.empty() && ctx.class_var_types.count(varname)) {
+        cname = ctx.class_var_types[varname];
+        string loaded = ctx.fresh("obj.ptr");
+        ctx.out << "  " << loaded << " = load ptr, ptr " << ctx.vars[varname] << "\n";
+        obj_ptr = loaded;
+    }
+    if (!cname.empty() && g_class_defs.count(cname)) {
+        const auto& cdef = g_class_defs[cname];
+        int fidx = cdef.fieldIndex(_member);
+        if (fidx < 0) throw CompileError(("no field '" + _member + "' in class " + cname).c_str());
+        VarType ftype = cdef.fields[fidx].type;
+        string fptr = ctx.fresh("field.ptr");
+        ctx.out << "  " << fptr << " = getelementptr %class." << cname
+                << ", ptr " << obj_ptr << ", i32 0, i32 " << (fidx + 1) << "\n";
+        if (ftype == VarType::CLASS) {
+            string reg = ctx.fresh("field.obj");
+            ctx.out << "  " << reg << " = load ptr, ptr " << fptr << "\n";
+            string r_i64 = ctx.fresh("field.i64");
+            ctx.out << "  " << r_i64 << " = ptrtoint ptr " << reg << " to i64\n";
+            return r_i64;
+        }
+        string tstr = llvm_type_str(ftype);
+        string reg = ctx.fresh(varname + "_" + _member);
+        ctx.out << "  " << reg << " = load " << tstr << ", ptr " << fptr << "\n";
+        return llvm_to_canonical(ctx, reg, ftype);
+    }
+
+    // Struct field
     string path = getFieldPath();
     string ptr = ctx.struct_field_ptrs[varname][path];
     if (ptr.empty())
@@ -1153,6 +1381,30 @@ string MemberAccess::llvm_rval(LLVMGenCtx& ctx) {
 
 string MemberAccess::llvm_lval(LLVMGenCtx& ctx) {
     string varname = resolve_struct_var(ctx, _object->getVarName());
+
+    // Check if it's a class member access
+    string cname;
+    string obj_ptr;
+    if (_object->getVarName() == "$this" || _object->getVarName() == "this") {
+        cname = ctx.this_class;
+        obj_ptr = ctx.this_ptr_reg;
+    } else if (!varname.empty() && ctx.class_var_types.count(varname)) {
+        cname = ctx.class_var_types[varname];
+        string loaded = ctx.fresh("obj.ptr");
+        ctx.out << "  " << loaded << " = load ptr, ptr " << ctx.vars[varname] << "\n";
+        obj_ptr = loaded;
+    }
+    if (!cname.empty() && g_class_defs.count(cname)) {
+        const auto& cdef = g_class_defs[cname];
+        int fidx = cdef.fieldIndex(_member);
+        if (fidx < 0) throw CompileError(("no field '" + _member + "' in class " + cname).c_str());
+        string fptr = ctx.fresh("field.ptr");
+        ctx.out << "  " << fptr << " = getelementptr %class." << cname
+                << ", ptr " << obj_ptr << ", i32 0, i32 " << (fidx + 1) << "\n";
+        return fptr;
+    }
+
+    // Struct field
     string path = getFieldPath();
     string ptr = ctx.struct_field_ptrs[varname][path];
     if (ptr.empty())
@@ -1160,20 +1412,37 @@ string MemberAccess::llvm_lval(LLVMGenCtx& ctx) {
     return ptr;
 }
 
-VarType MemberAccess::llvm_etype(LLVMGenCtx& ctx) const {
-    string varname = resolve_struct_var(ctx, _object->getVarName());
-    return canonical_type(member_field_type(ctx, varname, getFieldPath()));
-}
-
 VarType MemberAccess::llvm_declared_type(LLVMGenCtx& ctx) const {
     string varname = resolve_struct_var(ctx, _object->getVarName());
+    if (_object->getVarName() == "$this" || _object->getVarName() == "this") {
+        if (!ctx.this_class.empty() && g_class_defs.count(ctx.this_class)) {
+            int idx = g_class_defs[ctx.this_class].fieldIndex(_member);
+            if (idx >= 0) return g_class_defs[ctx.this_class].fields[idx].type;
+        }
+    }
+    if (!varname.empty() && ctx.class_var_types.count(varname)) {
+        const string& cname = ctx.class_var_types[varname];
+        if (g_class_defs.count(cname)) {
+            int idx = g_class_defs[cname].fieldIndex(_member);
+            if (idx >= 0) return g_class_defs[cname].fields[idx].type;
+        }
+    }
     return member_field_type(ctx, varname, getFieldPath());
+}
+
+VarType MemberAccess::llvm_etype(LLVMGenCtx& ctx) const {
+    return canonical_type(llvm_declared_type(ctx));
 }
 
 // ===== ThisExpr =====
 
 string ThisExpr::llvm_rval(LLVMGenCtx& ctx) {
-    throw CompileError("'this' cannot be used as a standalone rvalue");
+    if (!ctx.this_ptr_reg.empty()) {
+        string r = ctx.fresh("this.i64");
+        ctx.out << "  " << r << " = ptrtoint ptr " << ctx.this_ptr_reg << " to i64\n";
+        return r;
+    }
+    throw CompileError("'this' cannot be used as a standalone rvalue in this context");
 }
 
 string ThisExpr::llvm_lval(LLVMGenCtx& ctx) {
@@ -1191,14 +1460,34 @@ string FloatExp::llvm_rval(LLVMGenCtx& ctx) {
 
 // ===== Variable =====
 
+VarType Variable::llvm_declared_type(LLVMGenCtx& ctx) const {
+    if (ctx.class_var_types.count(_id)) return VarType::CLASS;
+    auto it = ctx.var_types.find(_id);
+    return (it != ctx.var_types.end()) ? it->second : VarType::LONG;
+}
+
 string Variable::llvm_rval(LLVMGenCtx& ctx) {
     auto it = ctx.vars.find(_id);
     if (it == ctx.vars.end()) {
         if (ctx.struct_var_types.count(_id))
             throw CompileError(("struct variable cannot be used as a value: " + _id).c_str());
+        if (_id == "$this" || _id == "this") {
+            if (!ctx.this_ptr_reg.empty()) {
+                string r = ctx.fresh("this.i64");
+                ctx.out << "  " << r << " = ptrtoint ptr " << ctx.this_ptr_reg << " to i64\n";
+                return r;
+            }
+        }
         throw CompileError(("undefined variable: " + _id).c_str());
     }
     VarType declared = llvm_declared_type(ctx);
+    if (declared == VarType::CLASS) {
+        string reg = ctx.fresh(_id + ".ptr");
+        ctx.out << "  " << reg << " = load ptr, ptr " << it->second << "\n";
+        string int_reg = ctx.fresh(_id + ".i64");
+        ctx.out << "  " << int_reg << " = ptrtoint ptr " << reg << " to i64\n";
+        return int_reg;
+    }
     string tstr = llvm_type_str(declared);
     string reg = ctx.fresh(_id);
     ctx.out << "  " << reg << " = load " << tstr << ", ptr " << it->second << "\n";
@@ -1339,3 +1628,179 @@ string CallFuncExp::llvm_rval(LLVMGenCtx& ctx) {
     ctx.out << ")\n";
     return reg;
 }
+
+// ===== ClassInit =====
+
+string ClassInit::llvm_rval(LLVMGenCtx& ctx) {
+    if (!g_class_defs.count(_class_name))
+        throw CompileError(("undefined class: " + _class_name).c_str());
+    const auto& cdef = g_class_defs[_class_name];
+    if (cdef.is_abstract)
+        throw CompileError(("cannot instantiate abstract class: " + _class_name).c_str());
+
+    // Allocate memory via malloc
+    string size_ptr = ctx.fresh("size.ptr");
+    ctx.out << "  " << size_ptr << " = getelementptr %class." << _class_name << ", ptr null, i32 1\n";
+    string size_i64 = ctx.fresh("size.i64");
+    ctx.out << "  " << size_i64 << " = ptrtoint ptr " << size_ptr << " to i64\n";
+    string raw_mem = ctx.fresh("raw.inst");
+    ctx.out << "  " << raw_mem << " = call ptr @malloc(i64 " << size_i64 << ")\n";
+
+    // Store vtable pointer into index 0
+    if (!cdef.vtable_methods.empty()) {
+        string vtable_gep = ctx.fresh("vtable.slot");
+        ctx.out << "  " << vtable_gep << " = getelementptr %class." << _class_name
+                << ", ptr " << raw_mem << ", i32 0, i32 0\n";
+        ctx.out << "  store ptr @vtable." << _class_name << ", ptr " << vtable_gep << "\n";
+    }
+
+    // Initialize fields to 0
+    for (int fi = 0; fi < (int)cdef.fields.size(); fi++) {
+        string fptr = ctx.fresh("init.fptr");
+        string tstr = llvm_type_str(cdef.fields[fi].type);
+        ctx.out << "  " << fptr << " = getelementptr %class." << _class_name
+                << ", ptr " << raw_mem << ", i32 0, i32 " << (fi + 1) << "\n";
+        if (is_float_type(cdef.fields[fi].type)) {
+            ctx.out << "  store " << tstr << " 0.0, ptr " << fptr << "\n";
+        } else if (cdef.fields[fi].type == VarType::CLASS) {
+            ctx.out << "  store ptr null, ptr " << fptr << "\n";
+        } else {
+            ctx.out << "  store " << tstr << " 0, ptr " << fptr << "\n";
+        }
+    }
+
+    // Call constructor if exists
+    if (cdef.constructor) {
+        vector<pair<string, string>> ctor_args;
+        ctor_args.push_back({"ptr", raw_mem});
+        for (int i = 0; i < (int)_args.size(); i++) {
+            string aval = _args[i]->llvm_rval(ctx);
+            VarType ac = _args[i]->llvm_etype(ctx);
+            if (i < (int)cdef.constructor->params.size()) {
+                VarType pt = cdef.constructor->params[i].second;
+                if (pt == VarType::CLASS) {
+                    string r = ctx.fresh("ctor.class.ptr");
+                    ctx.out << "  " << r << " = inttoptr i64 " << aval << " to ptr\n";
+                    ctor_args.push_back({"ptr", r});
+                } else {
+                    aval = llvm_coerce(ctx, aval, ac, pt);
+                    ctor_args.push_back({llvm_type_str(pt), aval});
+                }
+            } else {
+                ctor_args.push_back({"i64", aval});
+            }
+        }
+        ctx.out << "  call void @" << _class_name << ".constructor(";
+        for (int i = 0; i < (int)ctor_args.size(); i++) {
+            if (i > 0) ctx.out << ", ";
+            ctx.out << ctor_args[i].first << " " << ctor_args[i].second;
+        }
+        ctx.out << ")\n";
+    }
+
+    // Return instance pointer as i64 (canonical)
+    string ret_i64 = ctx.fresh("inst.i64");
+    ctx.out << "  " << ret_i64 << " = ptrtoint ptr " << raw_mem << " to i64\n";
+    return ret_i64;
+}
+
+// ===== CallMethodExp =====
+
+string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
+    string obj_ptr;
+    string cname;
+    auto* this_expr = dynamic_cast<ThisExpr*>(_object);
+    if (this_expr || _object->getVarName() == "$this" || _object->getVarName() == "this") {
+        obj_ptr = ctx.this_ptr_reg;
+        cname = ctx.this_class;
+    } else {
+        const string& varname = _object->getVarName();
+        if (!varname.empty() && ctx.class_var_types.count(varname)) {
+            cname = ctx.class_var_types[varname];
+            string loaded_ptr = ctx.fresh("obj.ptr");
+            ctx.out << "  " << loaded_ptr << " = load ptr, ptr " << ctx.vars[varname] << "\n";
+            obj_ptr = loaded_ptr;
+        } else {
+            string obj_i64 = _object->llvm_rval(ctx);
+            obj_ptr = ctx.fresh("obj.ptr");
+            ctx.out << "  " << obj_ptr << " = inttoptr i64 " << obj_i64 << " to ptr\n";
+        }
+    }
+
+    if (cname.empty() || !g_class_defs.count(cname)) {
+        throw CompileError(("cannot resolve class for method call: " + _method_name).c_str());
+    }
+
+    const auto& cdef = g_class_defs[cname];
+    int vtable_idx = cdef.getMethodVtableIndex(_method_name);
+    if (vtable_idx < 0) {
+        throw CompileError(("no method '" + _method_name + "' in class " + cname).c_str());
+    }
+    auto* minfo = cdef.getMethod(_method_name);
+
+    // Load vtable pointer from %obj_ptr (index 0)
+    string vtable_addr = ctx.fresh("vtable.addr");
+    ctx.out << "  " << vtable_addr << " = getelementptr ptr, ptr " << obj_ptr << ", i32 0\n";
+    string vtable_ptr = ctx.fresh("vtable.ptr");
+    ctx.out << "  " << vtable_ptr << " = load ptr, ptr " << vtable_addr << "\n";
+
+    // Load function pointer from vtable at vtable_idx
+    string fn_addr = ctx.fresh("fn.addr");
+    ctx.out << "  " << fn_addr << " = getelementptr ptr, ptr " << vtable_ptr << ", i32 " << vtable_idx << "\n";
+    string fn_ptr = ctx.fresh("fn.ptr");
+    ctx.out << "  " << fn_ptr << " = load ptr, ptr " << fn_addr << "\n";
+
+    // Build signature and call
+    string ret_str = (minfo->ret_type == VarType::STRUCT) ? "void" : "i64";
+    string fn_sig = ret_str + " (ptr";
+    for (auto* p : minfo->params) {
+        fn_sig += ", " + llvm_type_str(p->getType());
+    }
+    fn_sig += ")";
+
+    vector<pair<string, string>> call_args;
+    call_args.push_back({"ptr", obj_ptr});
+    for (int i = 0; i < (int)_args.size(); i++) {
+        string aval = _args[i]->llvm_rval(ctx);
+        VarType ac = _args[i]->llvm_etype(ctx);
+        if (i < (int)minfo->params.size()) {
+            VarType pt = minfo->params[i]->getType();
+            if (pt == VarType::CLASS) {
+                string r = ctx.fresh("arg.class.ptr");
+                ctx.out << "  " << r << " = inttoptr i64 " << aval << " to ptr\n";
+                call_args.push_back({"ptr", r});
+            } else {
+                aval = llvm_coerce(ctx, aval, ac, pt);
+                call_args.push_back({llvm_type_str(pt), aval});
+            }
+        } else {
+            call_args.push_back({"i64", aval});
+        }
+    }
+
+    string call_res = (ret_str != "void") ? ctx.fresh("call.res") : "";
+    ctx.out << "  ";
+    if (ret_str != "void") ctx.out << call_res << " = ";
+    ctx.out << "call " << fn_sig << " " << fn_ptr << "(";
+    for (int i = 0; i < (int)call_args.size(); i++) {
+        if (i > 0) ctx.out << ", ";
+        ctx.out << call_args[i].first << " " << call_args[i].second;
+    }
+    ctx.out << ")\n";
+
+    if (ret_str == "void") return "0";
+    return call_res;
+}
+
+// ===== CallMethodSt =====
+
+void CallMethodSt::llvm_emit(LLVMGenCtx& ctx) {
+    _call->llvm_rval(ctx);
+}
+
+// ===== ClassDef =====
+
+void ClassDef::llvm_emit(LLVMGenCtx& ctx) {
+    emit_all_classes(ctx);
+}
+

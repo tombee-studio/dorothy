@@ -48,9 +48,14 @@ struct LLVMGenCtx {
     std::map<std::string, std::string> array_data_ptrs;
     // Array variable name -> declared element type
     std::map<std::string, VarType> array_elem_types;
+    // Class support
+    std::map<std::string, std::string> class_var_types;
+    std::string this_class;
+    std::string this_ptr_reg;
+    bool classes_emitted = false;
 
     explicit LLVMGenCtx(std::ostream& o)
-        : out(o), counter(0), terminated(false) {}
+        : out(o), counter(0), terminated(false), classes_emitted(false) {}
 
     std::string fresh(const std::string& prefix = "t") {
         return "%" + prefix + "." + std::to_string(counter++);

@@ -25,6 +25,7 @@ using std::runtime_error;
 
 class Expression;
 class Statement;
+class DeclVar;
 
 // ===== Struct type info =====
 
@@ -54,6 +55,61 @@ struct StructDefInfo {
 extern map<string, StructDefInfo> g_struct_defs;
 extern string g_this_struct;
 extern map<string, string> g_var_struct_types;
+
+// ===== Class type info =====
+
+struct MethodInfo {
+    string name;
+    vector<DeclVar*> params;
+    VarType ret_type;
+    string ret_type_name;  // struct or class name
+    Statement *body = nullptr;
+    bool is_abstract = false;
+    bool is_override = false;
+    int vtable_index = -1;
+    string class_name;
+};
+
+struct ClassDefInfo {
+    string name;
+    string base_class;
+    bool is_abstract = false;
+    vector<FieldInfo> fields;
+    vector<MethodInfo*> vtable_methods;
+    map<string, MethodInfo*> methods;
+    ConstructorInfo *constructor = nullptr;
+
+    int fieldIndex(const string &fname) const {
+        for (int i = 0; i < (int)fields.size(); i++)
+            if (fields[i].name == fname) return i;
+        return -1;
+    }
+
+    int getMethodVtableIndex(const string &mname) const {
+        for (int i = 0; i < (int)vtable_methods.size(); i++) {
+            if (vtable_methods[i]->name == mname) return i;
+        }
+        return -1;
+    }
+
+    MethodInfo* getMethod(const string &mname) const {
+        auto it = methods.find(mname);
+        return (it != methods.end()) ? it->second : nullptr;
+    }
+};
+
+extern map<string, ClassDefInfo> g_class_defs;
+extern string g_this_class;
+extern map<string, string> g_var_class_types;
+
+inline bool is_subclass_of(const string& derived, const string& base,
+                           const map<string, ClassDefInfo>& defs) {
+    if (derived == base) return true;
+    auto it = defs.find(derived);
+    if (it == defs.end()) return false;
+    if (it->second.base_class.empty()) return false;
+    return is_subclass_of(it->second.base_class, base, defs);
+}
 
 class CompileError : public std::runtime_error {
  public:
@@ -86,6 +142,7 @@ class DeclVar : public Node {
     const string& getId() const { return _id; }
     bool isConst() const { return _is_const; }
     const string& getStructName() const { return _struct_name; }
+    const string& getClassName() const { return _struct_name; }
 
     virtual void print(ostream &, int tab);
     virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
@@ -160,6 +217,7 @@ class Function : public Node {
     const string &getName() const { return _id; }
     VarType getRetType() const { return _ret_type; }
     const string &getRetStructName() const { return _ret_struct_name; }
+    const string &getRetClassName() const { return _ret_struct_name; }
     bool hasExplicitRetType() const { return _has_explicit_ret_type; }
     Statement *getBody() const { return _body; }
     virtual bool isImport() const { return false; }
@@ -774,3 +832,71 @@ class ThisExpr : public Expression {
         return this_key;
     }
 };
+
+// ===== Class expression and statement nodes =====
+
+class ClassInit : public Expression {
+    string _class_name;
+    vector<Expression *> _args;
+
+ public:
+    ClassInit(string class_name, vector<Expression *> args)
+        : _class_name(class_name), _args(std::move(args)) {}
+
+    const string& getClassName() const { return _class_name; }
+    const vector<Expression *>& getArgs() const { return _args; }
+
+    virtual void print(ostream &, int tab);
+    virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &, int);
+    virtual void lcompile(vector<Code> &, map<string, int> &, map<string, int> &, int);
+    virtual string llvm_rval(LLVMGenCtx &);
+    virtual VarType llvm_etype(LLVMGenCtx &) const { return VarType::LONG; }
+    virtual VarType llvm_declared_type(LLVMGenCtx &) const { return VarType::CLASS; }
+    virtual VarType static_type(const map<string, VarType> &, const map<string, VarType> &) const { return VarType::CLASS; }
+};
+
+class CallMethodExp : public Expression {
+    Expression *_object;
+    string _method_name;
+    vector<Expression *> _args;
+
+ public:
+    CallMethodExp(Expression *object, string method_name, vector<Expression *> args)
+        : _object(object), _method_name(method_name), _args(std::move(args)) {}
+
+    Expression *getObject() const { return _object; }
+    const string &getMethodName() const { return _method_name; }
+    const vector<Expression *> &getArgs() const { return _args; }
+
+    virtual void print(ostream &, int tab);
+    virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &, int);
+    virtual void lcompile(vector<Code> &, map<string, int> &, map<string, int> &, int);
+    virtual string llvm_rval(LLVMGenCtx &);
+    virtual VarType llvm_etype(LLVMGenCtx &ctx) const;
+    virtual VarType llvm_declared_type(LLVMGenCtx &ctx) const;
+};
+
+class CallMethodSt : public Statement {
+    CallMethodExp *_call;
+
+ public:
+    explicit CallMethodSt(CallMethodExp *call) : _call(call) {}
+    CallMethodExp *getCall() const { return _call; }
+
+    virtual void print(ostream &, int tab);
+    virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &, int);
+    virtual void llvm_emit(LLVMGenCtx &);
+};
+
+class ClassDef : public Node {
+    ClassDefInfo _info;
+
+ public:
+    explicit ClassDef(ClassDefInfo info) : _info(std::move(info)) {}
+    const ClassDefInfo& getInfo() const { return _info; }
+
+    virtual void print(ostream &, int tab);
+    virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &, int);
+    virtual void llvm_emit(LLVMGenCtx &);
+};
+

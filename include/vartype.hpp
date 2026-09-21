@@ -9,6 +9,7 @@ enum class VarType {
     FLOAT,    // float  - 4 byte floating point
     DOUBLE,   // double - 8 byte floating point
     STRUCT,   // user-defined struct type
+    CLASS,    // user-defined class type (reference semantics, pointer)
     INFERRED, // placeholder for type inference; resolved in llvm_emit
 };
 
@@ -20,6 +21,7 @@ inline std::string llvm_type_str(VarType t) {
         case VarType::FLOAT:    return "float";
         case VarType::DOUBLE:   return "double";
         case VarType::STRUCT:   return "ptr";
+        case VarType::CLASS:    return "ptr";
         case VarType::INFERRED: return "i64";
     }
     return "i64";

@@ -16,6 +16,9 @@ void Lexer::tokenize(string p, int* ppos) {
         if (tokenize_keyword(p, ppos, "var", Token::KW_VAR)) continue;
         if (tokenize_keyword(p, ppos, "let", Token::KW_LET)) continue;
         if (tokenize_keyword(p, ppos, "struct", Token::KW_STRUCT)) continue;
+        if (tokenize_keyword(p, ppos, "class", Token::KW_CLASS)) continue;
+        if (tokenize_keyword(p, ppos, "abstract", Token::KW_ABSTRACT)) continue;
+        if (tokenize_keyword(p, ppos, "override", Token::KW_OVERRIDE)) continue;
         if (tokenize_keyword(p, ppos, "constructor", Token::KW_CONSTRUCTOR)) continue;
         if (tokenize_keyword(p, ppos, "this", Token::KW_THIS)) continue;
         if (tokenize_keyword(p, ppos, "double", Token::KW_DOUBLE)) continue;
@@ -66,8 +69,15 @@ void Lexer::tokenize(string p, int* ppos) {
 }
 
 bool Lexer::skip(string p, int* ppos) {
-    if (p[*ppos] == ' ' || p[*ppos] == '\n') {
+    if (p[*ppos] == ' ' || p[*ppos] == '\n' || p[*ppos] == '\t' || p[*ppos] == '\r') {
         (*ppos)++;
+        return true;
+    }
+    if ((size_t)(*ppos + 1) < p.size() && p[*ppos] == '/' && p[*ppos + 1] == '/') {
+        *ppos += 2;
+        while (*ppos < (int)p.size() && p[*ppos] != '\n') {
+            (*ppos)++;
+        }
         return true;
     }
     return false;
