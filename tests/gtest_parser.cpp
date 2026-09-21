@@ -302,3 +302,133 @@ TEST(ParserTest, ParseFibonacciWithReturnType) {
     EXPECT_EQ(program[1]->getName(), "main");
     EXPECT_TRUE(program[1]->hasExplicitRetType());
 }
+
+// ===== Multi-file import tests =====
+
+#include <fstream>
+#include <filesystem>
+
+TEST(ParserTest, ImportDorothyFileSuccess) {
+    namespace fs = std::filesystem;
+    fs::path tmp_dir = fs::temp_directory_path() / "dorothy_test_import";
+    fs::create_directories(tmp_dir);
+
+    // lib.dorothy
+    {
+        std::ofstream ofs(tmp_dir / "lib.dorothy");
+        ofs << "struct Point { var x: int; var y: int; }\n"
+            << "func add(a: int, b: int): int { return a + b; }\n";
+    }
+    // main.dorothy
+    {
+        std::ofstream ofs(tmp_dir / "main.dorothy");
+        ofs << "import \"lib.dorothy\";\n"
+            << "func main(): int {\n"
+            << "  var p: Point = Point(1, 2);\n"
+            << "  return add(p.x, p.y);\n"
+            << "}\n";
+    }
+
+    Parser parser;
+    auto program = parser.parse_file((tmp_dir / "main.dorothy").string());
+    ASSERT_EQ(program.size(), 2u);
+    EXPECT_EQ(program[0]->getName(), "add");
+    EXPECT_EQ(program[1]->getName(), "main");
+    EXPECT_TRUE(parser.getStructDefs().count("Point") > 0);
+
+    fs::remove_all(tmp_dir);
+}
+
+TEST(ParserTest, ImportDorothyMultipleMainThrows) {
+    namespace fs = std::filesystem;
+    fs::path tmp_dir = fs::temp_directory_path() / "dorothy_test_multi_main";
+    fs::create_directories(tmp_dir);
+
+    // sub.dorothy has main
+    {
+        std::ofstream ofs(tmp_dir / "sub.dorothy");
+        ofs << "func main(): int { return 1; }\n";
+    }
+    // main.dorothy also has main
+    {
+        std::ofstream ofs(tmp_dir / "main.dorothy");
+        ofs << "import \"sub.dorothy\";\n"
+            << "func main(): int { return 2; }\n";
+    }
+
+    Parser parser;
+    EXPECT_THROW(parser.parse_file((tmp_dir / "main.dorothy").string()), ParseError);
+
+    fs::remove_all(tmp_dir);
+}
+
+TEST(ParserTest, ImportDorothyDuplicateFunctionThrows) {
+    namespace fs = std::filesystem;
+    fs::path tmp_dir = fs::temp_directory_path() / "dorothy_test_dup_func";
+    fs::create_directories(tmp_dir);
+
+    {
+        std::ofstream ofs(tmp_dir / "sub.dorothy");
+        ofs << "func helper(): int { return 1; }\n";
+    }
+    {
+        std::ofstream ofs(tmp_dir / "main.dorothy");
+        ofs << "import \"sub.dorothy\";\n"
+            << "func helper(): int { return 2; }\n"
+            << "func main(): int { return helper(); }\n";
+    }
+
+    Parser parser;
+    EXPECT_THROW(parser.parse_file((tmp_dir / "main.dorothy").string()), ParseError);
+
+    fs::remove_all(tmp_dir);
+}
+
+TEST(ParserTest, ImportDorothyDiamondDependencyDeduplicated) {
+    namespace fs = std::filesystem;
+    fs::path tmp_dir = fs::temp_directory_path() / "dorothy_test_diamond";
+    fs::create_directories(tmp_dir);
+
+    // common.dorothy
+    {
+        std::ofstream ofs(tmp_dir / "common.dorothy");
+        ofs << "func common_func(): int { return 42; }\n";
+    }
+    // mod_a.dorothy imports common
+    {
+        std::ofstream ofs(tmp_dir / "mod_a.dorothy");
+        ofs << "import \"common.dorothy\";\n"
+            << "func a_func(): int { return common_func() + 1; }\n";
+    }
+    // mod_b.dorothy imports common
+    {
+        std::ofstream ofs(tmp_dir / "mod_b.dorothy");
+        ofs << "import \"common.dorothy\";\n"
+            << "func b_func(): int { return common_func() + 2; }\n";
+    }
+    // main.dorothy imports mod_a and mod_b
+    {
+        std::ofstream ofs(tmp_dir / "main.dorothy");
+        ofs << "import \"mod_a.dorothy\";\n"
+            << "import \"mod_b.dorothy\";\n"
+            << "func main(): int { return a_func() + b_func(); }\n";
+    }
+
+    Parser parser;
+    auto program = parser.parse_file((tmp_dir / "main.dorothy").string());
+    // common_func is imported only once, followed by a_func, b_func, main
+    ASSERT_EQ(program.size(), 4u);
+    EXPECT_EQ(program[0]->getName(), "common_func");
+    EXPECT_EQ(program[1]->getName(), "a_func");
+    EXPECT_EQ(program[2]->getName(), "b_func");
+    EXPECT_EQ(program[3]->getName(), "main");
+
+    fs::remove_all(tmp_dir);
+}
+
+TEST(ParserTest, ImportDorothyNonExistentFileThrows) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex("import \"non_existent_file.dorothy\"; func main() { return 0; }");
+    EXPECT_THROW(parser.parse(tokens), ParseError);
+}

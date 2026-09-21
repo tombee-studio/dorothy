@@ -1,0 +1,23 @@
+struct Vector2 {
+    var x: int;
+    var y: int;
+
+    constructor(x: int, y: int) {
+        this.x = x;
+        this.y = y;
+    }
+}
+
+func add_vec(a: Vector2, b: Vector2) -> Vector2 {
+    var res: Vector2 = Vector2(a.x + b.x, a.y + b.y);
+    return res;
+}
+
+func scale_vec(v: Vector2, factor: int) -> Vector2 {
+    var res: Vector2 = Vector2(v.x * factor, v.y * factor);
+    return res;
+}
+
+func dot_vec(a: Vector2, b: Vector2): int {
+    return a.x * b.x + a.y * b.y;
+}
