@@ -46,6 +46,8 @@ struct LLVMGenCtx {
     std::map<std::string, CImportedFunc> c_imported_funcs;
     // Array variable name -> raw alloca ptr register (for provenance-safe pointer passing)
     std::map<std::string, std::string> array_data_ptrs;
+    // Array variable name -> declared element type
+    std::map<std::string, VarType> array_elem_types;
 
     explicit LLVMGenCtx(std::ostream& o)
         : out(o), counter(0), terminated(false) {}

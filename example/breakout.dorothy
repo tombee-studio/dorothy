@@ -1,0 +1,339 @@
+import "stdio.h";
+import "SDL2/SDL.h";
+
+func draw_rect(ren: long, x: int, y: int, w: int, h: int, r: int, g: int, b: int) {
+    var rect: int[4];
+    rect[0] = x;
+    rect[1] = y;
+    rect[2] = w;
+    rect[3] = h;
+    SDL_SetRenderDrawColor(ren, r, g, b, 255);
+    SDL_RenderFillRect(ren, rect);
+    return 0;
+}
+
+struct Ball {
+    var x: int;
+    var y: int;
+    var vx: int;
+    var vy: int;
+    var size: int;
+
+    constructor(x: int, y: int, vx: int, vy: int, size: int) {
+        this.x = x;
+        this.y = y;
+        this.vx = vx;
+        this.vy = vy;
+        this.size = size;
+    }
+}
+
+struct Paddle {
+    var x: int;
+    var y: int;
+    var w: int;
+    var h: int;
+    var speed: int;
+
+    constructor(x: int, y: int, w: int, h: int, speed: int) {
+        this.x = x;
+        this.y = y;
+        this.w = w;
+        this.h = h;
+        this.speed = speed;
+    }
+}
+
+func main() {
+    var init_res: int = SDL_Init(32);
+    if (init_res < 0) {
+        var err_init = "Failed to initialize SDL2: %s\n";
+        var err_str = SDL_GetError();
+        printf(err_init, err_str);
+        return 1;
+    }
+
+    var win_title = "Dorothy Breakout (SDL2)";
+    var win = SDL_CreateWindow(win_title, 100, 100, 640, 480, 4);
+    if (win == 0) {
+        var err_win = "Failed to create window: %s\n";
+        var err_w_str = SDL_GetError();
+        printf(err_win, err_w_str);
+        SDL_Quit();
+        return 1;
+    }
+
+    var ren = SDL_CreateRenderer(win, 0 - 1, 0);
+    if (ren == 0) {
+        var err_ren = "Failed to create renderer: %s\n";
+        var err_r_str = SDL_GetError();
+        printf(err_ren, err_r_str);
+        SDL_DestroyWindow(win);
+        SDL_Quit();
+        return 1;
+    }
+
+    var welcome_msg = "=== Dorothy Breakout Game Started! ===\nControls: [Left/Right] or [A/D] to move, [ESC] to quit\n";
+    printf(welcome_msg);
+
+    var paddle: Paddle = Paddle(280, 440, 80, 12, 6);
+    var ball: Ball = Ball(315, 300, 3, 0 - 4, 10);
+
+    var score: int = 0;
+    var lives: int = 3;
+    var game_over: int = 0;
+    var game_clear: int = 0;
+    var running: int = 1;
+    var move_dir: int = 0;
+
+    var block_alive: int[24];
+    var block_x: int[24];
+    var block_y: int[24];
+    var block_w: int = 68;
+    var block_h: int = 18;
+    var blocks_remaining: int = 24;
+
+    var row: int = 0;
+    while (row < 3) {
+        var col: int = 0;
+        while (col < 8) {
+            var idx: int = row * 8 + col;
+            block_alive[idx] = 1;
+            block_x[idx] = 24 + col * 76;
+            block_y[idx] = 50 + row * 26;
+            col = col + 1;
+        }
+        row = row + 1;
+    }
+
+    var event: int[32];
+    var fmt_score = "Score: %d | Lives: %d\n";
+    var fmt_hit = "Hit block! Score: %d\n";
+    var fmt_clear = ">>> CONGRATULATIONS! ALL BLOCKS CLEARED! Final Score: %d <<<\n";
+    var fmt_over = ">>> GAME OVER! Final Score: %d <<<\n";
+
+    printf(fmt_score, score, lives);
+
+    while (running == 1) {
+        while (SDL_PollEvent(event) != 0) {
+            var etype: int = event[0];
+            if (etype == 256) {
+                running = 0;
+            }
+            if (etype == 768) {
+                var key: int = event[5];
+                if (key == 27) {
+                    running = 0;
+                }
+                if (key == 1073741904) {
+                    move_dir = 0 - 1;
+                }
+                if (key == 97) {
+                    move_dir = 0 - 1;
+                }
+                if (key == 1073741903) {
+                    move_dir = 1;
+                }
+                if (key == 100) {
+                    move_dir = 1;
+                }
+                if (key == 114) {
+                    if (game_over == 1) {
+                        game_over = 0;
+                        game_clear = 0;
+                        lives = 3;
+                        score = 0;
+                        blocks_remaining = 24;
+                        var bi: int = 0;
+                        while (bi < 24) {
+                            block_alive[bi] = 1;
+                            bi = bi + 1;
+                        }
+                        ball.x = 315;
+                        ball.y = 300;
+                        ball.vx = 3;
+                        ball.vy = 0 - 4;
+                        var restart_msg = "Game Restarted!\n";
+                        printf(restart_msg);
+                    }
+                    if (game_clear == 1) {
+                        game_over = 0;
+                        game_clear = 0;
+                        lives = 3;
+                        score = 0;
+                        blocks_remaining = 24;
+                        var bi2: int = 0;
+                        while (bi2 < 24) {
+                            block_alive[bi2] = 1;
+                            bi2 = bi2 + 1;
+                        }
+                        ball.x = 315;
+                        ball.y = 300;
+                        ball.vx = 3;
+                        ball.vy = 0 - 4;
+                        var restart_msg2 = "Game Restarted!\n";
+                        printf(restart_msg2);
+                    }
+                }
+            }
+            if (etype == 769) {
+                var ukey: int = event[5];
+                if (ukey == 1073741904) {
+                    if (move_dir < 0) { move_dir = 0; }
+                }
+                if (ukey == 97) {
+                    if (move_dir < 0) { move_dir = 0; }
+                }
+                if (ukey == 1073741903) {
+                    if (move_dir > 0) { move_dir = 0; }
+                }
+                if (ukey == 100) {
+                    if (move_dir > 0) { move_dir = 0; }
+                }
+            }
+        }
+
+        if (game_over == 0) {
+            if (game_clear == 0) {
+                paddle.x = paddle.x + move_dir * paddle.speed;
+                if (paddle.x < 10) {
+                    paddle.x = 10;
+                }
+                if (paddle.x + paddle.w > 630) {
+                    paddle.x = 630 - paddle.w;
+                }
+
+                ball.x = ball.x + ball.vx;
+                ball.y = ball.y + ball.vy;
+
+                if (ball.x <= 10) {
+                    ball.x = 10;
+                    ball.vx = 0 - ball.vx;
+                }
+                if (ball.x + ball.size >= 630) {
+                    ball.x = 630 - ball.size;
+                    ball.vx = 0 - ball.vx;
+                }
+
+                if (ball.y <= 10) {
+                    ball.y = 10;
+                    ball.vy = 0 - ball.vy;
+                }
+
+                if (ball.y + ball.size >= paddle.y) {
+                    if (ball.y <= paddle.y + paddle.h) {
+                        if (ball.x + ball.size >= paddle.x) {
+                            if (ball.x <= paddle.x + paddle.w) {
+                                if (ball.vy > 0) {
+                                    ball.vy = 0 - ball.vy;
+                                    ball.y = paddle.y - ball.size;
+
+                                    var center_p: int = paddle.x + paddle.w / 2;
+                                    var center_b: int = ball.x + ball.size / 2;
+                                    var diff: int = center_b - center_p;
+                                    if (diff < 0 - 15) {
+                                        ball.vx = 0 - 4;
+                                    }
+                                    if (diff > 15) {
+                                        ball.vx = 4;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                var b_idx: int = 0;
+                while (b_idx < 24) {
+                    if (block_alive[b_idx] == 1) {
+                        var bx: int = block_x[b_idx];
+                        var by: int = block_y[b_idx];
+                        if (ball.x + ball.size >= bx) {
+                            if (ball.x <= bx + block_w) {
+                                if (ball.y + ball.size >= by) {
+                                    if (ball.y <= by + block_h) {
+                                        block_alive[b_idx] = 0;
+                                        ball.vy = 0 - ball.vy;
+                                        blocks_remaining = blocks_remaining - 1;
+
+                                        var b_row: int = b_idx / 8;
+                                        var add_pts: int = (3 - b_row) * 10;
+                                        score = score + add_pts;
+                                        printf(fmt_hit, score);
+
+                                        if (blocks_remaining == 0) {
+                                            game_clear = 1;
+                                            printf(fmt_clear, score);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    b_idx = b_idx + 1;
+                }
+
+                if (ball.y > 480) {
+                    lives = lives - 1;
+                    if (lives <= 0) {
+                        game_over = 1;
+                        printf(fmt_over, score);
+                    } else {
+                        printf(fmt_score, score, lives);
+                        ball.x = paddle.x + paddle.w / 2 - 5;
+                        ball.y = 300;
+                        ball.vx = 3;
+                        ball.vy = 0 - 4;
+                    }
+                }
+            }
+        }
+
+        SDL_SetRenderDrawColor(ren, 15, 23, 42, 255);
+        SDL_RenderClear(ren);
+
+        draw_rect(ren, 0, 0, 640, 10, 51, 65, 85);
+        draw_rect(ren, 0, 0, 10, 480, 51, 65, 85);
+        draw_rect(ren, 630, 0, 10, 480, 51, 65, 85);
+
+        var render_i: int = 0;
+        while (render_i < 24) {
+            if (block_alive[render_i] == 1) {
+                var r_row: int = render_i / 8;
+                if (r_row == 0) {
+                    draw_rect(ren, block_x[render_i], block_y[render_i], block_w, block_h, 239, 68, 68);
+                }
+                if (r_row == 1) {
+                    draw_rect(ren, block_x[render_i], block_y[render_i], block_w, block_h, 245, 158, 11);
+                }
+                if (r_row == 2) {
+                    draw_rect(ren, block_x[render_i], block_y[render_i], block_w, block_h, 16, 185, 129);
+                }
+            }
+            render_i = render_i + 1;
+        }
+
+        draw_rect(ren, paddle.x, paddle.y, paddle.w, paddle.h, 56, 189, 248);
+
+        draw_rect(ren, ball.x, ball.y, ball.size, ball.size, 255, 255, 255);
+
+        var l_idx: int = 0;
+        while (l_idx < lives) {
+            draw_rect(ren, 20 + l_idx * 16, 462, 10, 10, 239, 68, 68);
+            l_idx = l_idx + 1;
+        }
+
+        SDL_RenderPresent(ren);
+
+        SDL_Delay(16);
+    }
+
+    var exit_msg = "Thanks for playing Dorothy Breakout!\n";
+    printf(exit_msg);
+
+    SDL_DestroyRenderer(ren);
+    SDL_DestroyWindow(win);
+    SDL_Quit();
+
+    return 0;
+}
