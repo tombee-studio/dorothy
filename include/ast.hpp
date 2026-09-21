@@ -622,6 +622,8 @@ class ArrayIndex : public Expression {
                           map<string, int> &, int);
     virtual string llvm_rval(LLVMGenCtx &);
     virtual string llvm_lval(LLVMGenCtx &);
+    VarType llvm_declared_type(LLVMGenCtx &ctx) const override;
+    VarType llvm_etype(LLVMGenCtx &ctx) const override;
 };
 
 class Address : public Expression {

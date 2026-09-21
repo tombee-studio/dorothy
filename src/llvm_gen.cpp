@@ -23,7 +23,7 @@ static string c_type_to_llvm(string t) {
     if (t.find('*') != string::npos || t.find('[') != string::npos) return "ptr";
     // Remove qualifiers
     for (const char* q : {"const ", "volatile ", "restrict ", "__restrict__ ",
-                           "__restrict ", "unsigned ", "signed "}) {
+                           "__restrict ", "unsigned ", "signed ", "struct ", "enum ", "union "}) {
         size_t pos;
         string qw(q);
         while ((pos = t.find(qw)) != string::npos) t.erase(pos, qw.size());
@@ -31,18 +31,23 @@ static string c_type_to_llvm(string t) {
     t = trim_str(t);
     if (t == "void")   return "void";
     if (t == "_Bool" || t == "bool") return "i1";
-    if (t == "char" || t == "signed char" || t == "unsigned char") return "i8";
-    if (t == "short" || t == "short int") return "i16";
-    if (t == "int" || t == "int32_t" || t == "uint32_t" || t == "wchar_t"
+    if (t == "char" || t == "Uint8" || t == "Sint8" || t == "uint8_t" || t == "int8_t"
+     || t == "int8" || t == "uint8") return "i8";
+    if (t == "short" || t == "short int" || t == "Uint16" || t == "Sint16"
+     || t == "uint16_t" || t == "int16_t" || t == "int16" || t == "uint16") return "i16";
+    if (t == "int" || t == "int32_t" || t == "uint32_t" || t == "Uint32" || t == "Sint32"
+     || t == "int32" || t == "uint32" || t == "wchar_t"
      || t == "__int32_t" || t == "__uint32_t") return "i32";
     if (t == "long" || t == "long int" || t == "long long" || t == "long long int"
+     || t == "Uint64" || t == "Sint64" || t == "int64_t" || t == "uint64_t"
+     || t == "int64" || t == "uint64"
      || t == "size_t" || t == "__SIZE_TYPE__" || t == "ssize_t" || t == "__SSIZE_TYPE__"
      || t == "ptrdiff_t" || t == "__PTRDIFF_TYPE__" || t == "intptr_t" || t == "uintptr_t"
-     || t == "int64_t" || t == "uint64_t" || t == "__int64_t" || t == "__uint64_t"
      || t == "off_t" || t == "__off_t" || t == "__off64_t") return "i64";
     if (t == "float")  return "float";
     if (t == "double" || t == "long double") return "double";
-    return "i64";  // fallback
+    if (t.rfind("SDL_", 0) == 0) return "i32";  // SDL enums and scalar typedefs
+    return "i32";  // default unknown C scalar/enum types to i32
 }
 
 // Parse "int (const char *, ...)" → {ret_llvm, [param_llvm_or_"..."]}
@@ -101,14 +106,14 @@ static std::map<string, CImportedFunc> parse_c_header_funcs(const string& header
     {
         FILE* f = fopen(tmp_c, "w");
         if (!f) return result;
-        if (header_path.find('/') != string::npos || header_path[0] == '.')
+        if (header_path.rfind("./", 0) == 0 || header_path.rfind("../", 0) == 0 || header_path[0] == '/')
             fprintf(f, "#include \"%s\"\n", header_path.c_str());
         else
             fprintf(f, "#include <%s>\n", header_path.c_str());
         fclose(f);
     }
 
-    string cmd = "clang -Xclang -ast-dump -fsyntax-only " + string(tmp_c) + " 2>/dev/null";
+    string cmd = "clang -Xclang -ast-dump -fsyntax-only -I. -I./include -I/opt/homebrew/include -I/opt/homebrew/include/SDL2 -I/usr/local/include -I/usr/local/include/SDL2 -I/usr/include " + string(tmp_c) + " 2>/dev/null";
     FILE* pipe = popen(cmd.c_str(), "r");
     if (!pipe) { remove(tmp_c); return result; }
 
@@ -187,10 +192,14 @@ static string emitCImportedCall(LLVMGenCtx& ctx, const string& id,
                     ctx.out << "  " << r << " = inttoptr i64 " << val << " to ptr\n";
                     final_args.push_back({"ptr", r});
                 }
-            } else if (ptype == "i32") {
-                string r = ctx.fresh("arg.i32");
-                ctx.out << "  " << r << " = trunc i64 " << val << " to i32\n";
-                final_args.push_back({"i32", r});
+            } else if (ptype == "i8" || ptype == "i16" || ptype == "i32") {
+                string r = ctx.fresh("arg." + ptype);
+                ctx.out << "  " << r << " = trunc i64 " << val << " to " << ptype << "\n";
+                final_args.push_back({ptype, r});
+            } else if (ptype == "float") {
+                string r = ctx.fresh("arg.float");
+                ctx.out << "  " << r << " = fptrunc double " << val << " to float\n";
+                final_args.push_back({ptype, r});
             } else {
                 final_args.push_back({ptype, val});
             }
@@ -633,6 +642,7 @@ void DeclArrayVar::llvm_emit(LLVMGenCtx& ctx) {
     ctx.vars[_id] = ptr;
     ctx.var_types[_id] = VarType::LONG;  // pointer (address) is i64
     ctx.array_data_ptrs[_id] = data;     // raw alloca ptr for provenance-safe access
+    ctx.array_elem_types[_id] = _type;   // element type (e.g. i32, i8)
 }
 
 // ===== InitializedDeclArrayVar =====
@@ -986,6 +996,7 @@ void Function::llvm_emit(LLVMGenCtx& ctx) {
 void ImportCHeader::llvm_emit(LLVMGenCtx& ctx) {
     auto funcs = parse_c_header_funcs(_header_path);
     for (auto& [name, info] : funcs) {
+        if (ctx.c_imported_funcs.count(name)) continue;
         ctx.c_imported_funcs[name] = info;
         ctx.out << "declare " << info.ret_type << " @" << name << "(";
         for (int i = 0; i < (int)info.param_types.size(); i++) {
@@ -1206,26 +1217,68 @@ string Variable::llvm_lval(LLVMGenCtx& ctx) {
 
 // ===== ArrayIndex =====
 
+VarType ArrayIndex::llvm_declared_type(LLVMGenCtx& ctx) const {
+    const string& varname = _pointer->getVarName();
+    auto it = ctx.array_elem_types.find(varname);
+    if (it != ctx.array_elem_types.end()) {
+        return it->second;
+    }
+    return VarType::LONG;
+}
+
+VarType ArrayIndex::llvm_etype(LLVMGenCtx& ctx) const {
+    return canonical_type(llvm_declared_type(ctx));
+}
+
 string ArrayIndex::llvm_rval(LLVMGenCtx& ctx) {
-    string base = _pointer->llvm_rval(ctx);
+    VarType elem_type = llvm_declared_type(ctx);
+    string tstr = llvm_type_str(elem_type);
+    const string& varname = _pointer->getVarName();
+    string arr_ptr;
+    auto it = ctx.array_data_ptrs.find(varname);
+    if (it != ctx.array_data_ptrs.end()) {
+        arr_ptr = it->second;
+    } else {
+        string base = _pointer->llvm_rval(ctx);
+        arr_ptr = ctx.fresh("arr.ptr");
+        ctx.out << "  " << arr_ptr << " = inttoptr i64 " << base << " to ptr\n";
+    }
     string idx = _index->llvm_rval(ctx);
-    string arr_ptr = ctx.fresh("arr.ptr");
     string elem_ptr = ctx.fresh("elem.ptr");
-    string reg = ctx.fresh();
-    ctx.out << "  " << arr_ptr << " = inttoptr i64 " << base << " to ptr\n";
-    ctx.out << "  " << elem_ptr << " = getelementptr i64, ptr " << arr_ptr
+    ctx.out << "  " << elem_ptr << " = getelementptr " << tstr << ", ptr " << arr_ptr
             << ", i64 " << idx << "\n";
-    ctx.out << "  " << reg << " = load i64, ptr " << elem_ptr << "\n";
-    return reg;
+    string loaded = ctx.fresh();
+    ctx.out << "  " << loaded << " = load " << tstr << ", ptr " << elem_ptr << "\n";
+    if (is_float_type(elem_type)) {
+        if (elem_type == VarType::FLOAT) {
+            return llvm_promote_to_double(ctx, loaded, VarType::FLOAT);
+        }
+        return loaded;
+    }
+    if (elem_type != VarType::LONG) {
+        string reg = ctx.fresh("sext");
+        ctx.out << "  " << reg << " = sext " << tstr << " " << loaded << " to i64\n";
+        return reg;
+    }
+    return loaded;
 }
 
 string ArrayIndex::llvm_lval(LLVMGenCtx& ctx) {
-    string base = _pointer->llvm_rval(ctx);
+    VarType elem_type = llvm_declared_type(ctx);
+    string tstr = llvm_type_str(elem_type);
+    const string& varname = _pointer->getVarName();
+    string arr_ptr;
+    auto it = ctx.array_data_ptrs.find(varname);
+    if (it != ctx.array_data_ptrs.end()) {
+        arr_ptr = it->second;
+    } else {
+        string base = _pointer->llvm_rval(ctx);
+        arr_ptr = ctx.fresh("arr.ptr");
+        ctx.out << "  " << arr_ptr << " = inttoptr i64 " << base << " to ptr\n";
+    }
     string idx = _index->llvm_rval(ctx);
-    string arr_ptr = ctx.fresh("arr.ptr");
     string elem_ptr = ctx.fresh("elem.ptr");
-    ctx.out << "  " << arr_ptr << " = inttoptr i64 " << base << " to ptr\n";
-    ctx.out << "  " << elem_ptr << " = getelementptr i64, ptr " << arr_ptr
+    ctx.out << "  " << elem_ptr << " = getelementptr " << tstr << ", ptr " << arr_ptr
             << ", i64 " << idx << "\n";
     return elem_ptr;
 }
