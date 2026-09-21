@@ -246,8 +246,12 @@ TEST(ClassTest, LLVMEmitClassAndVTable) {
         "}\n"
     );
     EXPECT_NE(ir.find("declare ptr @malloc(i64)"), std::string::npos);
-    EXPECT_NE(ir.find("%class.Animal = type { ptr, i32 }"), std::string::npos);
-    EXPECT_NE(ir.find("@vtable.Animal = global [1 x ptr] [ptr @Animal.speak]"), std::string::npos);
+    EXPECT_NE(ir.find("declare void @free(ptr)"), std::string::npos);
+    EXPECT_NE(ir.find("define void @_dorothy_retain(ptr %obj)"), std::string::npos);
+    EXPECT_NE(ir.find("define void @_dorothy_release(ptr %obj)"), std::string::npos);
+    EXPECT_NE(ir.find("%class.Animal = type { ptr, i64, i32 }"), std::string::npos);
+    EXPECT_NE(ir.find("@vtable.Animal = global [2 x ptr] [ptr @Animal.destructor, ptr @Animal.speak]"), std::string::npos);
+    EXPECT_NE(ir.find("define void @Animal.destructor(ptr %this)"), std::string::npos);
     EXPECT_NE(ir.find("define void @Animal.constructor(ptr %this"), std::string::npos);
     EXPECT_NE(ir.find("define i64 @Animal.speak(ptr %this)"), std::string::npos);
     EXPECT_NE(ir.find("call ptr @malloc("), std::string::npos);
@@ -434,3 +438,133 @@ TEST(ClassTest, ExecMultiLevelInheritance) {
         "}\n";
     EXPECT_EQ(run_llvm(src), 123);
 }
+
+// ==========================================
+// 5. 参照カウンタ方式（ARC）・メモリ解放テスト
+// ==========================================
+
+// 再代入時の旧インスタンス解放と新インスタンス保持
+TEST(ClassTest, ExecReassignmentCleanup) {
+    std::string src =
+        "class Node {\n"
+        "    var val: int;\n"
+        "    func Node(v: int) { this.val = v; }\n"
+        "}\n"
+        "func main() -> int {\n"
+        "    var a: Node = Node(10);\n"
+        "    var b: Node = Node(20);\n"
+        "    a = b;\n" // a now shares Node(20), Node(10) is freed
+        "    return a.val + b.val;\n" // 20 + 20 = 40
+        "}\n";
+    EXPECT_EQ(run_llvm(src), 40);
+}
+
+// 自己代入の安全性（早期解放されないこと）
+TEST(ClassTest, ExecSelfAssignmentSafe) {
+    std::string src =
+        "class Node {\n"
+        "    var val: int;\n"
+        "    func Node(v: int) { this.val = v; }\n"
+        "}\n"
+        "func main() -> int {\n"
+        "    var a: Node = Node(99);\n"
+        "    a = a;\n" // self-assignment must not cause premature free
+        "    return a.val;\n" // 99
+        "}\n";
+    EXPECT_EQ(run_llvm(src), 99);
+}
+
+// クラスメンバ（親オブジェクトが子オブジェクトを保持）の再帰的解放
+TEST(ClassTest, ExecNestedClassMemberRecursiveCleanup) {
+    std::string src =
+        "class Child {\n"
+        "    var id: int;\n"
+        "    func Child(i: int) { this.id = i; }\n"
+        "}\n"
+        "class Parent {\n"
+        "    var child: Child;\n"
+        "    func Parent(c: Child) { this.child = c; }\n"
+        "}\n"
+        "func test_nested() -> int {\n"
+        "    var c: Child = Child(50);\n"
+        "    var p: Parent = Parent(c);\n"
+        "    return p.child.id;\n"
+        "}\n"
+        "func main() -> int {\n"
+        "    return test_nested();\n" // 50
+        "}\n";
+    EXPECT_EQ(run_llvm(src), 50);
+}
+
+// 関数からのインスタンス返却と所有権移譲
+TEST(ClassTest, ExecFunctionReturnOwnershipTransfer) {
+    std::string src =
+        "class Item {\n"
+        "    var price: int;\n"
+        "    func Item(p: int) { this.price = p; }\n"
+        "}\n"
+        "func make_item(p: int) -> Item {\n"
+        "    var it: Item = Item(p);\n"
+        "    return it;\n"
+        "}\n"
+        "func main() -> int {\n"
+        "    var item: Item = make_item(150);\n"
+        "    return item.price;\n" // 150
+        "}\n";
+    EXPECT_EQ(run_llvm(src), 150);
+}
+
+// 多態性（基底クラス参照経由）での派生クラスデストラクタ呼び出し
+TEST(ClassTest, ExecPolymorphicDestructorWithFields) {
+    std::string src =
+        "abstract class BaseObj {\n"
+        "    abstract func getVal() -> int;\n"
+        "}\n"
+        "class ChildObj {\n"
+        "    var score: int;\n"
+        "    func ChildObj(s: int) { this.score = s; }\n"
+        "}\n"
+        "class DerivedObj: BaseObj {\n"
+        "    var child: ChildObj;\n"
+        "    func DerivedObj(c: ChildObj) { this.child = c; }\n"
+        "    override func getVal() -> int { return this.child.score; }\n"
+        "}\n"
+        "func calc(b: BaseObj) -> int {\n"
+        "    return b.getVal();\n"
+        "}\n"
+        "func main() -> int {\n"
+        "    var c: ChildObj = ChildObj(77);\n"
+        "    var d: DerivedObj = DerivedObj(c);\n"
+        "    var b: BaseObj = d;\n"
+        "    return calc(b);\n" // 77
+        "}\n";
+    EXPECT_EQ(run_llvm(src), 77);
+}
+
+// ループ内で大量に Entity を生成・破棄（ユーザーのユースケース検証）
+TEST(ClassTest, ExecMassiveDynamicCreationInLoop) {
+    std::string src =
+        "class Bullet {\n"
+        "    var x: int;\n"
+        "    var y: int;\n"
+        "    var damage: int;\n"
+        "    func Bullet(x: int, y: int, d: int) {\n"
+        "        this.x = x;\n"
+        "        this.y = y;\n"
+        "        this.damage = d;\n"
+        "    }\n"
+        "}\n"
+        "func main() -> int {\n"
+        "    var total: int = 0;\n"
+        "    var i: int = 0;\n"
+        "    while (i < 10000) {\n"
+        "        var b: Bullet = Bullet(i, i * 2, 5);\n"
+        "        total = total + b.damage;\n"
+        "        i = i + 1;\n"
+        "    }\n"
+        "    // total = 10000 * 5 = 50000 -> 50000 % 256 = 80 (or return total / 1000 = 50)\n"
+        "    return total / 1000;\n" // 50
+        "}\n";
+    EXPECT_EQ(run_llvm(src), 50);
+}
+

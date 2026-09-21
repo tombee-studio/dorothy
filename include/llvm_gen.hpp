@@ -38,8 +38,10 @@ struct LLVMGenCtx {
     // struct param/return support
     std::map<std::string, std::vector<ParamInfo>> func_param_info;
     std::map<std::string, std::string> func_return_struct;  // func -> return struct name
+    std::set<std::string> func_return_class;               // func -> returns class
     std::vector<std::string> sret_field_ptrs;  // ptr regs for sret params
     std::string current_ret_struct;            // struct name if current func returns struct
+    bool current_ret_is_class = false;         // true if current func returns class
     // nested struct support: var -> (dotted-path -> struct_name)
     std::map<std::string, std::map<std::string, std::string>> struct_subfield_types;
     // C header import: function name -> signature (populated by ImportCHeader::llvm_emit)
@@ -53,6 +55,27 @@ struct LLVMGenCtx {
     std::string this_class;
     std::string this_ptr_reg;
     bool classes_emitted = false;
+
+    // Scope management for class reference counting (ARC)
+    struct Scope {
+        std::vector<std::string> class_var_ptrs;
+    };
+    std::vector<Scope> scopes;
+
+    void push_scope() {
+        scopes.emplace_back();
+    }
+
+    void register_class_var(const std::string& addr_ptr) {
+        if (scopes.empty()) {
+            push_scope();
+        }
+        scopes.back().class_var_ptrs.push_back(addr_ptr);
+    }
+
+    void emit_release_scope(const Scope& scope);
+    void pop_scope();
+    void emit_release_all_scopes();
 
     explicit LLVMGenCtx(std::ostream& o)
         : out(o), counter(0), terminated(false), classes_emitted(false) {}
@@ -70,3 +93,4 @@ struct LLVMGenCtx {
         terminated = false;
     }
 };
+

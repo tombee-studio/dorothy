@@ -150,11 +150,11 @@ static std::map<string, CImportedFunc> parse_c_header_funcs(const string& header
         // Only add the first (most general) declaration for each name
         if (result.count(func_name)) continue;
 
-        auto [ret_llvm, params] = parse_c_func_type(type_str);
+        auto parsed_sig = parse_c_func_type(type_str);
         CImportedFunc info;
-        info.ret_type = ret_llvm;
+        info.ret_type = parsed_sig.first;
         info.is_variadic = false;
-        for (const auto& p : params) {
+        for (const auto& p : parsed_sig.second) {
             if (p == "...") info.is_variadic = true;
             else            info.param_types.push_back(p);
         }
@@ -434,7 +434,108 @@ static string llvm_promote_to_double(LLVMGenCtx& ctx, const string& val,
     return val;
 }
 
+// ===== Scope & ARC helper implementations =====
+
+void LLVMGenCtx::emit_release_scope(const LLVMGenCtx::Scope& scope) {
+    for (const auto& addr : scope.class_var_ptrs) {
+        string loaded = fresh("rel.var");
+        out << "  " << loaded << " = load ptr, ptr " << addr << "\n";
+        out << "  call void @_dorothy_release(ptr " << loaded << ")\n";
+    }
+}
+
+void LLVMGenCtx::pop_scope() {
+    if (!scopes.empty()) {
+        emit_release_scope(scopes.back());
+        scopes.pop_back();
+    }
+}
+
+void LLVMGenCtx::emit_release_all_scopes() {
+    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+        emit_release_scope(*it);
+    }
+}
+
+// ===== Class resolution helpers =====
+
+static string resolve_expr_class_name(LLVMGenCtx& ctx, Expression* expr) {
+    if (!expr) return "";
+    if (dynamic_cast<ThisExpr*>(expr)) {
+        return ctx.this_class;
+    }
+    auto* ma = dynamic_cast<MemberAccess*>(expr);
+    if (ma) {
+        string parent_class = resolve_expr_class_name(ctx, ma->getObject());
+        if (!parent_class.empty() && g_class_defs.count(parent_class)) {
+            int idx = g_class_defs[parent_class].fieldIndex(ma->getMember());
+            if (idx >= 0) {
+                const auto& field = g_class_defs[parent_class].fields[idx];
+                if (field.type == VarType::CLASS) {
+                    return field.struct_name;
+                }
+            }
+        }
+        return "";
+    }
+    auto* var_expr = dynamic_cast<Variable*>(expr);
+    if (var_expr) {
+        const string& varname = var_expr->getVarName();
+        if (varname == "$this" || varname == "this") return ctx.this_class;
+        auto it = ctx.class_var_types.find(varname);
+        if (it != ctx.class_var_types.end()) return it->second;
+    }
+    auto* cme = dynamic_cast<CallMethodExp*>(expr);
+    if (cme) {
+        string parent_class = resolve_expr_class_name(ctx, cme->getObject());
+        if (!parent_class.empty() && g_class_defs.count(parent_class)) {
+            auto* minfo = g_class_defs[parent_class].getMethod(cme->getMethodName());
+            if (minfo && minfo->ret_type == VarType::CLASS) {
+                return minfo->ret_type_name;
+            }
+        }
+    }
+    auto* ci = dynamic_cast<ClassInit*>(expr);
+    if (ci) {
+        return ci->getClassName();
+    }
+    return "";
+}
+
+static bool is_class_returning_call(LLVMGenCtx& ctx, Expression* expr) {
+    if (!expr) return false;
+    if (dynamic_cast<ClassInit*>(expr)) return true;
+    if (auto* cfe = dynamic_cast<CallFuncExp*>(expr)) {
+        if (ctx.func_return_class.count(cfe->getId())) return true;
+    }
+    if (auto* cme = dynamic_cast<CallMethodExp*>(expr)) {
+        string cname = resolve_expr_class_name(ctx, cme->getObject());
+        if (!cname.empty() && g_class_defs.count(cname)) {
+            auto* minfo = g_class_defs[cname].getMethod(cme->getMethodName());
+            if (minfo && minfo->ret_type == VarType::CLASS) return true;
+        }
+    }
+    return false;
+}
+
 // ===== Class emission helpers =====
+
+static void emit_class_destructor(LLVMGenCtx& ctx, const string& cname, const ClassDefInfo& cdef) {
+    ctx.out << "define void @" << cname << ".destructor(ptr %this) {\nentry:\n";
+    for (int fi = 0; fi < (int)cdef.fields.size(); fi++) {
+        if (cdef.fields[fi].type == VarType::CLASS) {
+            string fptr = ctx.fresh("dtor.fptr");
+            ctx.out << "  " << fptr << " = getelementptr %class." << cname
+                    << ", ptr %this, i32 0, i32 " << (fi + 2) << "\n";
+            string child = ctx.fresh("dtor.child");
+            ctx.out << "  " << child << " = load ptr, ptr " << fptr << "\n";
+            ctx.out << "  call void @_dorothy_release(ptr " << child << ")\n";
+        }
+    }
+    ctx.out << "  call void @free(ptr %this)\n";
+    ctx.out << "  ret void\n";
+    ctx.out << "}\n\n";
+}
 
 static void emit_class_constructor(LLVMGenCtx& ctx, const string& cname, const ClassDefInfo& cdef) {
     if (!cdef.constructor) return;
@@ -450,8 +551,11 @@ static void emit_class_constructor(LLVMGenCtx& ctx, const string& cname, const C
     ctx.this_class = cname;
     ctx.sret_field_ptrs.clear();
     ctx.current_ret_struct.clear();
+    ctx.current_ret_is_class = false;
     ctx.terminated = false;
     ctx.current_function = cname + ".constructor";
+    ctx.scopes.clear();
+    ctx.push_scope();
 
     vector<pair<string, string>> fn_params;
     fn_params.push_back({"ptr", "%this"});
@@ -473,15 +577,21 @@ static void emit_class_constructor(LLVMGenCtx& ctx, const string& cname, const C
         int n = ctx.counter++;
         string tstr = llvm_type_str(p.second);
         string ptr = "%" + p.first + ".addr." + to_string(n);
+        string param_reg = "%param." + to_string(flat_idx++);
         ctx.out << "  " << ptr << " = alloca " << tstr << "\n";
-        ctx.out << "  store " << tstr << " %param." << to_string(flat_idx++) << ", ptr " << ptr << "\n";
+        ctx.out << "  store " << tstr << " " << param_reg << ", ptr " << ptr << "\n";
         ctx.vars[p.first] = ptr;
         ctx.var_types[p.first] = p.second;
+        if (p.second == VarType::CLASS) {
+            ctx.out << "  call void @_dorothy_retain(ptr " << param_reg << ")\n";
+            ctx.register_class_var(ptr);
+        }
     }
 
     cdef.constructor->body->llvm_emit(ctx);
 
     if (!ctx.terminated) {
+        ctx.pop_scope();
         ctx.out << "  ret void\n";
     }
     ctx.out << "}\n\n";
@@ -501,8 +611,11 @@ static void emit_class_method(LLVMGenCtx& ctx, const string& cname, MethodInfo* 
     ctx.this_class = cname;
     ctx.sret_field_ptrs.clear();
     ctx.current_ret_struct = (m->ret_type == VarType::STRUCT) ? m->ret_type_name : "";
+    ctx.current_ret_is_class = (m->ret_type == VarType::CLASS);
     ctx.terminated = false;
     ctx.current_function = cname + "." + m->name;
+    ctx.scopes.clear();
+    ctx.push_scope();
 
     string ret_llvm = (m->ret_type == VarType::STRUCT) ? "void" : "i64";
 
@@ -529,6 +642,7 @@ static void emit_class_method(LLVMGenCtx& ctx, const string& cname, MethodInfo* 
     m->body->llvm_emit(ctx);
 
     if (!ctx.terminated) {
+        ctx.pop_scope();
         if (m->ret_type == VarType::STRUCT) {
             ctx.out << "  ret void\n";
         } else {
@@ -543,15 +657,58 @@ static void emit_all_classes(LLVMGenCtx& ctx) {
     ctx.classes_emitted = true;
 
     if (!g_class_defs.empty()) {
-        // Declare malloc if not already declared by C header
+        // Declare malloc and free if not already declared by C header
         if (!ctx.c_imported_funcs.count("malloc")) {
             ctx.out << "declare ptr @malloc(i64)\n\n";
             ctx.c_imported_funcs["malloc"] = {"ptr", {"i64"}, false};
         }
+        if (!ctx.c_imported_funcs.count("free")) {
+            ctx.out << "declare void @free(ptr)\n\n";
+            ctx.c_imported_funcs["free"] = {"void", {"ptr"}, false};
+        }
 
-        // Class struct type definitions
-        for (auto& [cname, cdef] : g_class_defs) {
-            ctx.out << "%class." << cname << " = type { ptr";
+        // Emit ARC helper functions
+        ctx.out << "define void @_dorothy_retain(ptr %obj) {\n"
+                << "entry:\n"
+                << "  %is_null = icmp eq ptr %obj, null\n"
+                << "  br i1 %is_null, label %ret, label %retain.body\n"
+                << "retain.body:\n"
+                << "  %ref_slot = getelementptr { ptr, i64 }, ptr %obj, i32 0, i32 1\n"
+                << "  %cnt = load i64, ptr %ref_slot\n"
+                << "  %next = add i64 %cnt, 1\n"
+                << "  store i64 %next, ptr %ref_slot\n"
+                << "  br label %ret\n"
+                << "ret:\n"
+                << "  ret void\n"
+                << "}\n\n";
+
+        ctx.out << "define void @_dorothy_release(ptr %obj) {\n"
+                << "entry:\n"
+                << "  %is_null = icmp eq ptr %obj, null\n"
+                << "  br i1 %is_null, label %ret, label %rel.body\n"
+                << "rel.body:\n"
+                << "  %ref_slot = getelementptr { ptr, i64 }, ptr %obj, i32 0, i32 1\n"
+                << "  %cnt = load i64, ptr %ref_slot\n"
+                << "  %next = sub i64 %cnt, 1\n"
+                << "  store i64 %next, ptr %ref_slot\n"
+                << "  %is_zero = icmp eq i64 %next, 0\n"
+                << "  br i1 %is_zero, label %do_dtor, label %ret\n"
+                << "do_dtor:\n"
+                << "  %vtable_slot = getelementptr { ptr, i64 }, ptr %obj, i32 0, i32 0\n"
+                << "  %vtable_ptr = load ptr, ptr %vtable_slot\n"
+                << "  %dtor_slot = getelementptr ptr, ptr %vtable_ptr, i32 0\n"
+                << "  %dtor_fn = load ptr, ptr %dtor_slot\n"
+                << "  call void %dtor_fn(ptr %obj)\n"
+                << "  br label %ret\n"
+                << "ret:\n"
+                << "  ret void\n"
+                << "}\n\n";
+
+        // Class struct type definitions: %class.ClassName = type { ptr, i64, ...fields }
+        for (auto& pair : g_class_defs) {
+            const auto& cname = pair.first;
+            auto& cdef = pair.second;
+            ctx.out << "%class." << cname << " = type { ptr, i64";
             for (auto& f : cdef.fields) {
                 ctx.out << ", " << llvm_type_str(f.type);
             }
@@ -559,14 +716,16 @@ static void emit_all_classes(LLVMGenCtx& ctx) {
         }
         ctx.out << "\n";
 
-        // Class vtables
-        for (auto& [cname, cdef] : g_class_defs) {
+        // Class vtables: slot 0 is always destructor, slot 1..N are methods
+        for (auto& pair : g_class_defs) {
+            const auto& cname = pair.first;
+            auto& cdef = pair.second;
             if (cdef.is_abstract) continue;
             int n_methods = (int)cdef.vtable_methods.size();
-            if (n_methods == 0) continue;
-            ctx.out << "@vtable." << cname << " = global [" << n_methods << " x ptr] [";
+            ctx.out << "@vtable." << cname << " = global [" << (n_methods + 1) << " x ptr] [";
+            ctx.out << "ptr @" << cname << ".destructor";
             for (int i = 0; i < n_methods; i++) {
-                if (i > 0) ctx.out << ", ";
+                ctx.out << ", ";
                 auto* m = cdef.vtable_methods[i];
                 ctx.out << "ptr @" << m->class_name << "." << m->name;
             }
@@ -574,12 +733,18 @@ static void emit_all_classes(LLVMGenCtx& ctx) {
         }
         ctx.out << "\n";
 
-        // Constructors and methods
-        for (auto& [cname, cdef] : g_class_defs) {
+        // Destructors, Constructors and methods
+        for (auto& pair : g_class_defs) {
+            const auto& cname = pair.first;
+            auto& cdef = pair.second;
+            if (!cdef.is_abstract) {
+                emit_class_destructor(ctx, cname, cdef);
+            }
             if (cdef.constructor) {
                 emit_class_constructor(ctx, cname, cdef);
             }
-            for (auto& [mname, minfo] : cdef.methods) {
+            for (auto& mpair : cdef.methods) {
+                auto* minfo = mpair.second;
                 if (minfo->class_name == cname && !minfo->is_abstract) {
                     emit_class_method(ctx, cname, minfo);
                 }
@@ -608,6 +773,7 @@ void DeclVar::llvm_emit(LLVMGenCtx& ctx) {
         ctx.var_types[_id] = VarType::CLASS;
         ctx.class_var_types[_id] = _struct_name;
         if (_is_const) ctx.const_vars.insert(_id);
+        ctx.register_class_var(ptr);
         return;
     }
     if (_type == VarType::STRUCT) {
@@ -668,6 +834,10 @@ void InitializedDeclVar::llvm_emit(LLVMGenCtx& ctx) {
         string val = _init->llvm_rval(ctx);
         string ptr_val = ctx.fresh("init.ptr");
         ctx.out << "  " << ptr_val << " = inttoptr i64 " << val << " to ptr\n";
+        bool rhs_is_new_or_returned = is_class_returning_call(ctx, _init);
+        if (!rhs_is_new_or_returned) {
+            ctx.out << "  call void @_dorothy_retain(ptr " << ptr_val << ")\n";
+        }
         ctx.out << "  store ptr " << ptr_val << ", ptr " << ctx.vars[_id] << "\n";
         return;
     }
@@ -774,7 +944,8 @@ void InitializedDeclVar::llvm_emit(LLVMGenCtx& ctx) {
             sdef.constructor->body->llvm_emit(ctx);
 
             // Remove param vars from context
-            for (auto& [pname, ptype] : sdef.constructor->params) {
+            for (const auto& param : sdef.constructor->params) {
+                const auto& pname = param.first;
                 ctx.vars.erase(pname);
                 ctx.var_types.erase(pname);
             }
@@ -802,6 +973,8 @@ void DeclVar::llvm_param(LLVMGenCtx& ctx, const string& param_reg) {
     ctx.var_types[_id] = _type;
     if (_type == VarType::CLASS) {
         ctx.class_var_types[_id] = _struct_name;
+        ctx.out << "  call void @_dorothy_retain(ptr " << param_reg << ")\n";
+        ctx.register_class_var(ptr);
     }
 }
 
@@ -850,9 +1023,15 @@ void DeclVarSt::llvm_emit(LLVMGenCtx& ctx) { _decl->llvm_emit(ctx); }
 // ===== Block =====
 
 void Block::llvm_emit(LLVMGenCtx& ctx) {
+    ctx.push_scope();
     for (auto st : _statements) {
         if (ctx.terminated) break;
         st->llvm_emit(ctx);
+    }
+    if (!ctx.terminated) {
+        ctx.pop_scope();
+    } else {
+        if (!ctx.scopes.empty()) ctx.scopes.pop_back();
     }
 }
 
@@ -972,6 +1151,7 @@ void ReturnSt::llvm_emit(LLVMGenCtx& ctx) {
             ctx.out << "  store " << tstr << " " << val
                     << ", ptr " << ctx.sret_field_ptrs[fi] << "\n";
         }
+        ctx.emit_release_all_scopes();
         ctx.out << "  ret void\n";
         ctx.terminated = true;
         return;
@@ -979,6 +1159,16 @@ void ReturnSt::llvm_emit(LLVMGenCtx& ctx) {
 
     string val = _exp->llvm_rval(ctx);
     VarType etype = _exp->llvm_etype(ctx);
+
+    // If returning a CLASS, retain it before releasing local scopes
+    if (ctx.current_ret_is_class) {
+        string ret_ptr = ctx.fresh("ret.class.ptr");
+        ctx.out << "  " << ret_ptr << " = inttoptr i64 " << val << " to ptr\n";
+        ctx.out << "  call void @_dorothy_retain(ptr " << ret_ptr << ")\n";
+    }
+
+    ctx.emit_release_all_scopes();
+
     // All non-main functions return i64; convert float if needed
     if (is_float_type(etype)) {
         string conv = ctx.fresh("ret.i64");
@@ -1064,17 +1254,32 @@ void CallFuncSt::llvm_emit(LLVMGenCtx& ctx) {
         ctx.out << prepared[i].first << " " << prepared[i].second;
     }
     ctx.out << ")\n";
+
+    if (ctx.func_return_class.count(_id)) {
+        string ret_ptr = ctx.fresh("unused.class.ptr");
+        ctx.out << "  " << ret_ptr << " = inttoptr i64 " << reg << " to ptr\n";
+        ctx.out << "  call void @_dorothy_release(ptr " << ret_ptr << ")\n";
+    }
 }
 
 // ===== ExpressionSt =====
 
-void ExpressionSt::llvm_emit(LLVMGenCtx& ctx) { _exp->llvm_rval(ctx); }
+void ExpressionSt::llvm_emit(LLVMGenCtx& ctx) {
+    string val = _exp->llvm_rval(ctx);
+    if (is_class_returning_call(ctx, _exp)) {
+        string ret_ptr = ctx.fresh("unused.class.ptr");
+        ctx.out << "  " << ret_ptr << " = inttoptr i64 " << val << " to ptr\n";
+        ctx.out << "  call void @_dorothy_release(ptr " << ret_ptr << ")\n";
+    }
+}
 
 // ===== Function =====
 
 void Function::llvm_pre_register(LLVMGenCtx& ctx) {
-    if (!_ret_struct_name.empty())
+    if (_ret_type == VarType::STRUCT && !_ret_struct_name.empty())
         ctx.func_return_struct[_id] = _ret_struct_name;
+    if (_ret_type == VarType::CLASS)
+        ctx.func_return_class.insert(_id);
     vector<ParamInfo> pinfo;
     vector<VarType> flat_types;
     for (auto* arg : _args) {
@@ -1104,12 +1309,15 @@ void Function::llvm_emit(LLVMGenCtx& ctx) {
     ctx.this_ptr_reg.clear();
     ctx.this_class.clear();
     ctx.sret_field_ptrs.clear();
-    ctx.current_ret_struct = _ret_struct_name;
+    ctx.current_ret_struct = (_ret_type == VarType::STRUCT) ? _ret_struct_name : "";
+    ctx.current_ret_is_class = (_ret_type == VarType::CLASS);
     ctx.terminated = false;
     ctx.current_function = _id;
+    ctx.scopes.clear();
+    ctx.push_scope();
 
     bool is_main = (_id == "main");
-    bool returns_struct = !_ret_struct_name.empty();
+    bool returns_struct = (_ret_type == VarType::STRUCT && !_ret_struct_name.empty());
 
     // Register signatures (also done by pre_register, but ensure consistency)
     llvm_pre_register(ctx);
@@ -1172,12 +1380,12 @@ void Function::llvm_emit(LLVMGenCtx& ctx) {
     _body->llvm_emit(ctx);
 
     if (!ctx.terminated) {
+        ctx.pop_scope();
         if (returns_struct)
             ctx.out << "  ret void\n";
         else
             ctx.out << (is_main ? "  ret i32 0\n" : "  ret i64 0\n");
     }
-
     ctx.out << "}\n\n";
 }
 
@@ -1185,7 +1393,9 @@ void Function::llvm_emit(LLVMGenCtx& ctx) {
 
 void ImportCHeader::llvm_emit(LLVMGenCtx& ctx) {
     auto funcs = parse_c_header_funcs(_header_path);
-    for (auto& [name, info] : funcs) {
+    for (auto& pair : funcs) {
+        const auto& name = pair.first;
+        auto& info = pair.second;
         if (ctx.c_imported_funcs.count(name)) continue;
         ctx.c_imported_funcs[name] = info;
         ctx.out << "declare " << info.ret_type << " @" << name << "(";
@@ -1222,7 +1432,14 @@ string Assign::llvm_rval(LLVMGenCtx& ctx) {
     if (tgt_declared == VarType::CLASS) {
         string ptr_val = ctx.fresh("assign.ptr");
         ctx.out << "  " << ptr_val << " = inttoptr i64 " << val << " to ptr\n";
+        bool rhs_is_new_or_returned = is_class_returning_call(ctx, _expr);
+        if (!rhs_is_new_or_returned) {
+            ctx.out << "  call void @_dorothy_retain(ptr " << ptr_val << ")\n";
+        }
+        string old_val = ctx.fresh("old.ptr");
+        ctx.out << "  " << old_val << " = load ptr, ptr " << ptr << "\n";
         ctx.out << "  store ptr " << ptr_val << ", ptr " << ptr << "\n";
+        ctx.out << "  call void @_dorothy_release(ptr " << old_val << ")\n";
         return val;
     }
     VarType src_canonical = _expr->llvm_etype(ctx);
@@ -1334,49 +1551,6 @@ static VarType member_field_type(LLVMGenCtx& ctx, const string& varname,
     return resolve_path_field_type(sit->second, path);
 }
 
-static string resolve_expr_class_name(LLVMGenCtx& ctx, Expression* expr) {
-    if (!expr) return "";
-    if (dynamic_cast<ThisExpr*>(expr)) {
-        return ctx.this_class;
-    }
-    auto* ma = dynamic_cast<MemberAccess*>(expr);
-    if (ma) {
-        string parent_class = resolve_expr_class_name(ctx, ma->getObject());
-        if (!parent_class.empty() && g_class_defs.count(parent_class)) {
-            int idx = g_class_defs[parent_class].fieldIndex(ma->getMember());
-            if (idx >= 0) {
-                const auto& field = g_class_defs[parent_class].fields[idx];
-                if (field.type == VarType::CLASS) {
-                    return field.struct_name;
-                }
-            }
-        }
-        return "";
-    }
-    auto* var_expr = dynamic_cast<Variable*>(expr);
-    if (var_expr) {
-        const string& varname = var_expr->getVarName();
-        if (varname == "$this" || varname == "this") return ctx.this_class;
-        auto it = ctx.class_var_types.find(varname);
-        if (it != ctx.class_var_types.end()) return it->second;
-    }
-    auto* cme = dynamic_cast<CallMethodExp*>(expr);
-    if (cme) {
-        string parent_class = resolve_expr_class_name(ctx, cme->getObject());
-        if (!parent_class.empty() && g_class_defs.count(parent_class)) {
-            auto* minfo = g_class_defs[parent_class].getMethod(cme->getMethodName());
-            if (minfo && minfo->ret_type == VarType::CLASS) {
-                return minfo->ret_type_name;
-            }
-        }
-    }
-    auto* ci = dynamic_cast<ClassInit*>(expr);
-    if (ci) {
-        return ci->getClassName();
-    }
-    return "";
-}
-
 string MemberAccess::llvm_rval(LLVMGenCtx& ctx) {
     string cname = resolve_expr_class_name(ctx, _object);
     if (!cname.empty() && g_class_defs.count(cname)) {
@@ -1402,7 +1576,7 @@ string MemberAccess::llvm_rval(LLVMGenCtx& ctx) {
         VarType ftype = cdef.fields[fidx].type;
         string fptr = ctx.fresh("field.ptr");
         ctx.out << "  " << fptr << " = getelementptr %class." << cname
-                << ", ptr " << obj_ptr << ", i32 0, i32 " << (fidx + 1) << "\n";
+                << ", ptr " << obj_ptr << ", i32 0, i32 " << (fidx + 2) << "\n";
         if (ftype == VarType::CLASS) {
             string reg = ctx.fresh("field.obj");
             ctx.out << "  " << reg << " = load ptr, ptr " << fptr << "\n";
@@ -1453,7 +1627,7 @@ string MemberAccess::llvm_lval(LLVMGenCtx& ctx) {
         if (fidx < 0) throw CompileError(("no field '" + _member + "' in class " + cname).c_str());
         string fptr = ctx.fresh("field.ptr");
         ctx.out << "  " << fptr << " = getelementptr %class." << cname
-                << ", ptr " << obj_ptr << ", i32 0, i32 " << (fidx + 1) << "\n";
+                << ", ptr " << obj_ptr << ", i32 0, i32 " << (fidx + 2) << "\n";
         return fptr;
     }
 
@@ -1697,20 +1871,24 @@ string ClassInit::llvm_rval(LLVMGenCtx& ctx) {
     string raw_mem = ctx.fresh("raw.inst");
     ctx.out << "  " << raw_mem << " = call ptr @malloc(i64 " << size_i64 << ")\n";
 
-    // Store vtable pointer into index 0
-    if (!cdef.vtable_methods.empty()) {
-        string vtable_gep = ctx.fresh("vtable.slot");
-        ctx.out << "  " << vtable_gep << " = getelementptr %class." << _class_name
-                << ", ptr " << raw_mem << ", i32 0, i32 0\n";
-        ctx.out << "  store ptr @vtable." << _class_name << ", ptr " << vtable_gep << "\n";
-    }
+    // Store vtable pointer into slot 0
+    string vtable_gep = ctx.fresh("vtable.slot");
+    ctx.out << "  " << vtable_gep << " = getelementptr %class." << _class_name
+            << ", ptr " << raw_mem << ", i32 0, i32 0\n";
+    ctx.out << "  store ptr @vtable." << _class_name << ", ptr " << vtable_gep << "\n";
 
-    // Initialize fields to 0
+    // Store initial reference count = 1 into slot 1
+    string ref_slot = ctx.fresh("ref.slot");
+    ctx.out << "  " << ref_slot << " = getelementptr %class." << _class_name
+            << ", ptr " << raw_mem << ", i32 0, i32 1\n";
+    ctx.out << "  store i64 1, ptr " << ref_slot << "\n";
+
+    // Initialize fields to 0 (starting at slot 2)
     for (int fi = 0; fi < (int)cdef.fields.size(); fi++) {
         string fptr = ctx.fresh("init.fptr");
         string tstr = llvm_type_str(cdef.fields[fi].type);
         ctx.out << "  " << fptr << " = getelementptr %class." << _class_name
-                << ", ptr " << raw_mem << ", i32 0, i32 " << (fi + 1) << "\n";
+                << ", ptr " << raw_mem << ", i32 0, i32 " << (fi + 2) << "\n";
         if (is_float_type(cdef.fields[fi].type)) {
             ctx.out << "  store " << tstr << " 0.0, ptr " << fptr << "\n";
         } else if (cdef.fields[fi].type == VarType::CLASS) {
@@ -1793,9 +1971,9 @@ string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
     string vtable_ptr = ctx.fresh("vtable.ptr");
     ctx.out << "  " << vtable_ptr << " = load ptr, ptr " << vtable_addr << "\n";
 
-    // Load function pointer from vtable at vtable_idx
+    // Load function pointer from vtable at vtable_idx + 1 (slot 0 is destructor)
     string fn_addr = ctx.fresh("fn.addr");
-    ctx.out << "  " << fn_addr << " = getelementptr ptr, ptr " << vtable_ptr << ", i32 " << vtable_idx << "\n";
+    ctx.out << "  " << fn_addr << " = getelementptr ptr, ptr " << vtable_ptr << ", i32 " << (vtable_idx + 1) << "\n";
     string fn_ptr = ctx.fresh("fn.ptr");
     ctx.out << "  " << fn_ptr << " = load ptr, ptr " << fn_addr << "\n";
 
