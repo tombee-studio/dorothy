@@ -1,0 +1,103 @@
+// Dorothy Dynamic Array & Generics Demo:
+// - Array type declarations: T[] and Array<T>
+// - Array literal expressions: [], [1, 2, 3]
+// - Adding elements: push()
+// - Removing elements: remove() (primitive value equality and object reference equality)
+// - Index read & write: arr[i], arr[i] = val
+// - Array length: arr.length, arr.size()
+
+import "stdio.h";
+
+class Item {
+    var id: int;
+    var name: string;
+
+    func Item(id: int, name: string) {
+        this.id = id;
+        this.name = name;
+    }
+
+    func describe() {
+        let fmt: string = "Item(id=%d, name=%s)\n";
+        printf(fmt, this.id, this.name);
+    }
+}
+
+func main() -> int {
+    let header: string = "=== Dorothy Dynamic Array & Generics Demo ===\n\n";
+    printf(header);
+
+    // 1. Primitive integer array with array literal and push
+    let sec1: string = "--- 1. Primitive Array (int[] / Array<int>) ---\n";
+    printf(sec1);
+    var numbers: int[] = [10, 20, 30];
+    numbers.push(40);
+    numbers.push(50);
+
+    let msg_len: string = "Array length: %ld\n";
+    printf(msg_len, numbers.length);
+
+    // Modify element via indexing
+    numbers[1] = 25;
+
+    // Loop iteration and sum
+    var sum: int = 0;
+    var i: int = 0;
+    for (i = 0; i < numbers.length; i = i + 1) {
+        let msg_elem: string = "  numbers[%ld] = %d\n";
+        printf(msg_elem, i, numbers[i]);
+        sum = sum + numbers[i];
+    }
+    let msg_sum: string = "Sum of numbers: %d\n\n";
+    printf(msg_sum, sum);
+
+    // 2. Remove elements (value equality)
+    let sec2: string = "--- 2. Remove Elements by Value ---\n";
+    printf(sec2);
+    let msg_before: string = "Before remove(25), length: %ld\n";
+    printf(msg_before, numbers.length);
+
+    numbers.remove(25);
+
+    let msg_after: string = "After remove(25), length: %ld\n";
+    printf(msg_after, numbers.length);
+    for (i = 0; i < numbers.length; i = i + 1) {
+        let msg_elem2: string = "  numbers[%ld] = %d\n";
+        printf(msg_elem2, i, numbers[i]);
+    }
+    printf("\n");
+
+    // 3. String array using Array<string> syntax
+    let sec3: string = "--- 3. String Array (Array<string>) ---\n";
+    printf(sec3);
+    var languages: Array<string> = ["C++", "LLVM", "Dorothy"];
+    languages.push("Glinda");
+
+    for (i = 0; i < languages.size(); i = i + 1) {
+        let msg_str: string = "  languages[%ld] = %s\n";
+        printf(msg_str, i, languages[i]);
+    }
+    printf("\n");
+
+    // 4. Object array with reference equality remove
+    let sec4: string = "--- 4. Object Array (Array<Item>) ---\n";
+    printf(sec4);
+    var item1: Item = Item(1, "Potion");
+    var item2: Item = Item(2, "Shield");
+    var item3: Item = Item(3, "Sword");
+
+    var inventory: Array<Item> = [item1, item2, item3];
+    let msg_inv_before: string = "Inventory size before remove: %ld\n";
+    printf(msg_inv_before, inventory.length);
+
+    // Remove item2 by reference
+    inventory.remove(item2);
+
+    let msg_inv_after: string = "Inventory size after removing Shield: %ld\n";
+    printf(msg_inv_after, inventory.length);
+    for (i = 0; i < inventory.length; i = i + 1) {
+        inventory[i].describe();
+    }
+
+    return 0;
+}

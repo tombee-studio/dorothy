@@ -775,6 +775,17 @@ static string resolve_expr_class_name(LLVMGenCtx& ctx, Expression* expr) {
     if (ci) {
         return ci->getClassName();
     }
+    auto* ai = dynamic_cast<ArrayIndex*>(expr);
+    if (ai && ai->getPointer()) {
+        const string& vname = ai->getPointer()->getVarName();
+        auto it = ctx.array_var_typeinfo.find(vname);
+        if (it != ctx.array_var_typeinfo.end()) {
+            TypeInfo elem_ti = it->second.get_element_type();
+            if (elem_ti.base_type == VarType::CLASS || !elem_ti.type_name.empty()) {
+                return elem_ti.type_name;
+            }
+        }
+    }
     return "";
 }
 

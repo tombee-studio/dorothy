@@ -115,6 +115,7 @@ var pi = 3.14159;       // inferred as double
 | `float` | 4 bytes | `float` | Single-precision floating point |
 | `double` | 8 bytes | `double` | Double-precision floating point |
 | `string` | Pointer | `ptr` | Dynamically allocated null-terminated string |
+| `Array<T>` / `T[]` | Pointer | `ptr` | Dynamic heap-allocated array with element type `T` |
 
 #### Strings (`string`)
 Dorothy supports native heap-allocated string operations:
@@ -234,6 +235,57 @@ struct Point {
 
 func main() {
     let p: Point = Point(10, 20);
+    return 0;
+}
+```
+
+---
+
+### Dynamic Arrays & Generics (`Array<T>` / `T[]`)
+
+Dorothy supports dynamically sized arrays with generic type parameters (`Array<T>`) or shorthand array type syntax (`T[]`):
+
+- **Type Annotations**: `int[]`, `string[]`, `Array<int>`, `Array<string>`, `Array<Player>`
+- **Array Literals**: `[]`, `[1, 2, 3]`, `["Alice", "Bob"]`
+- **Dynamic Resizing**: Arrays automatically expand on heap memory as elements are added.
+- **Methods and Properties**:
+  - `arr.push(elem)`: Appends an element to the end of the array.
+  - `arr.remove(elem)`: Removes the first matching element (value equality for primitive types, instance reference equality for objects). Returns `1` if an element was removed, `0` otherwise.
+  - `arr[index]`: Reads or writes (`arr[index] = val`) the element at `index` (0-indexed). Bounds checking is enforced at runtime, raising an `IndexOutOfBoundsException` if violated.
+  - `arr.length` / `arr.size()`: Returns the current number of elements in the array (`long`).
+
+```dorothy
+import "stdio.h";
+
+class Player {
+    var name: string;
+    func Player(n: string) {
+        this.name = n;
+    }
+}
+
+func main() -> int {
+    // Array creation with literal
+    var numbers: int[] = [10, 20, 30];
+    numbers.push(40);
+
+    // Modify element by index
+    numbers[0] = 100;
+
+    // Loop through elements
+    var i: int = 0;
+    for (i = 0; i < numbers.length; i = i + 1) {
+        printf("%d\n", numbers[i]);
+    }
+
+    // Generic object array
+    var p1: Player = Player("Alice");
+    var p2: Player = Player("Bob");
+    var team: Array<Player> = [p1, p2];
+
+    team.remove(p1); // Removes by reference equality
+    printf("Remaining players: %ld\n", team.length);
+
     return 0;
 }
 ```
