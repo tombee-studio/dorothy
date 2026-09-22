@@ -4,10 +4,10 @@ import "string.h";
 import "SDL2/SDL.h";
 
 abstract class Component {
-    var entity: Entity;
-    var next: Component;
+    var entity: Entity?;
+    var next: Component?;
 
-    abstract func getName() -> long;
+    abstract func getName() -> string;
     abstract func init();
     abstract func update();
     abstract func render(ren: long);
@@ -15,45 +15,45 @@ abstract class Component {
 
 class Entity {
     var active: int;
-    var firstComponent: Component;
-    var next: Entity;
+    var firstComponent: Component?;
+    var next: Entity?;
 
     func Entity() {
         this.active = 1;
-        this.firstComponent = 0;
-        this.next = 0;
+        this.firstComponent = null;
+        this.next = null;
     }
 
     func addComponent(c: Component) {
         c.entity = this;
         c.init();
-        if (this.firstComponent == 0) {
+        if (this.firstComponent == null) {
             this.firstComponent = c;
         } else {
             var curr: Component = this.firstComponent;
-            while (curr.next != 0) {
+            while (curr.next != null) {
                 curr = curr.next;
             }
             curr.next = c;
         }
     }
 
-    func getComponent(name: long) -> Component {
-        var curr: Component = this.firstComponent;
-        while (curr != 0) {
-            var cname: long = curr.getName();
-            if (strcmp(cname, name) == 0) {
+    func getComponent(name: string) -> Component? {
+        var curr: Component? = this.firstComponent;
+        while (curr != null) {
+            let cname: string = curr.getName();
+            if (cname == name) {
                 return curr;
             }
             curr = curr.next;
         }
-        return 0;
+        return null;
     }
 
     func update() {
         if (this.active == 1) {
-            var curr: Component = this.firstComponent;
-            while (curr != 0) {
+            var curr: Component? = this.firstComponent;
+            while (curr != null) {
                 curr.update();
                 curr = curr.next;
             }
@@ -62,8 +62,8 @@ class Entity {
 
     func render(ren: long) {
         if (this.active == 1) {
-            var curr: Component = this.firstComponent;
-            while (curr != 0) {
+            var curr: Component? = this.firstComponent;
+            while (curr != null) {
                 curr.render(ren);
                 curr = curr.next;
             }
@@ -72,18 +72,18 @@ class Entity {
 }
 
 class Scene {
-    var firstEntity: Entity;
+    var firstEntity: Entity?;
 
     func Scene() {
-        this.firstEntity = 0;
+        this.firstEntity = null;
     }
 
     func addEntity(e: Entity) {
-        if (this.firstEntity == 0) {
+        if (this.firstEntity == null) {
             this.firstEntity = e;
         } else {
             var curr: Entity = this.firstEntity;
-            while (curr.next != 0) {
+            while (curr.next != null) {
                 curr = curr.next;
             }
             curr.next = e;
@@ -91,16 +91,16 @@ class Scene {
     }
 
     func update() {
-        var curr: Entity = this.firstEntity;
-        while (curr != 0) {
+        var curr: Entity? = this.firstEntity;
+        while (curr != null) {
             curr.update();
             curr = curr.next;
         }
     }
 
     func render(ren: long) {
-        var curr: Entity = this.firstEntity;
-        while (curr != 0) {
+        var curr: Entity? = this.firstEntity;
+        while (curr != null) {
             curr.render(ren);
             curr = curr.next;
         }
@@ -125,7 +125,7 @@ class GlindaApp {
     var screenWidth: int;
     var screenHeight: int;
     var frameDelay: int;
-    var scene: Scene;
+    var scene: Scene?;
     var bgR: int;
     var bgG: int;
     var bgB: int;
@@ -137,7 +137,7 @@ class GlindaApp {
         this.screenWidth = w;
         this.screenHeight = h;
         this.frameDelay = 16;
-        this.scene = 0;
+        this.scene = null;
         this.bgR = 24;
         this.bgG = 24;
         this.bgB = 32;
@@ -157,17 +157,17 @@ class GlindaApp {
         this.frameDelay = ms;
     }
 
-    func initSDL(title: long) -> int {
-        var init_res: int = SDL_Init(32);
+    func initSDL(title: string) -> int {
+        let init_res: int = SDL_Init(32);
         if (init_res < 0) {
-            var err_init = "Glinda: Failed to init SDL: %s\n";
+            let err_init: string = "Glinda: Failed to init SDL: %s\n";
             printf(err_init, SDL_GetError());
             return 1;
         }
 
         this.window = SDL_CreateWindow(title, 100, 100, this.screenWidth, this.screenHeight, 4);
         if (this.window == 0) {
-            var err_win = "Glinda: Failed to create window: %s\n";
+            let err_win: string = "Glinda: Failed to create window: %s\n";
             printf(err_win, SDL_GetError());
             SDL_Quit();
             return 1;
@@ -177,7 +177,7 @@ class GlindaApp {
         if (this.renderer == 0) {
             this.renderer = SDL_CreateRenderer(this.window, 0 - 1, 0);
             if (this.renderer == 0) {
-                var err_ren = "Glinda: Failed to create renderer: %s\n";
+                let err_ren: string = "Glinda: Failed to create renderer: %s\n";
                 printf(err_ren, SDL_GetError());
                 SDL_DestroyWindow(this.window);
                 SDL_Quit();
@@ -197,26 +197,26 @@ class GlindaApp {
         var event: int[24];
         while (this.running == 1) {
             while (SDL_PollEvent(event) != 0) {
-                var eventType: int = event[0];
+                let eventType: int = event[0];
                 if (eventType == 256) {
                     this.running = 0;
                 }
                 if (eventType == 768) {
-                    var keycode: int = event[5];
+                    let keycode: int = event[5];
                     if (keycode == 27) {
                         this.running = 0;
                     }
                 }
             }
 
-            if (this.scene != 0) {
+            if (this.scene != null) {
                 this.scene.update();
             }
 
             SDL_SetRenderDrawColor(this.renderer, this.bgR, this.bgG, this.bgB, 255);
             SDL_RenderClear(this.renderer);
 
-            if (this.scene != 0) {
+            if (this.scene != null) {
                 this.scene.render(this.renderer);
             }
 

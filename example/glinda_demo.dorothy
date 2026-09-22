@@ -24,9 +24,8 @@ class TransformComponent: Component {
         this.height = h;
     }
 
-    override func getName() -> long {
-        var n = "Transform";
-        return n;
+    override func getName() -> string {
+        return "Transform";
     }
 
     override func init() {}
@@ -53,18 +52,17 @@ class RectRendererComponent: Component {
         this.b = b;
     }
 
-    override func getName() -> long {
-        var n = "RectRenderer";
-        return n;
+    override func getName() -> string {
+        return "RectRenderer";
     }
 
     override func init() {}
     override func update() {}
 
     override func render(ren: long) {
-        var tName = "Transform";
-        var t: TransformComponent = this.entity.getComponent(tName);
-        if (t != 0) {
+        let tName: string = "Transform";
+        let t: TransformComponent? = this.entity.getComponent(tName);
+        if (t != null) {
             glinda_draw_rect(ren, t.x, t.y, t.width, t.height, this.r, this.g, this.b, 255);
         }
     }
@@ -82,17 +80,16 @@ class BouncingPhysicsComponent: Component {
         this.screenH = sh;
     }
 
-    override func getName() -> long {
-        var n = "BouncingPhysics";
-        return n;
+    override func getName() -> string {
+        return "BouncingPhysics";
     }
 
     override func init() {}
 
     override func update() {
-        var tName = "Transform";
-        var t: TransformComponent = this.entity.getComponent(tName);
-        if (t != 0) {
+        let tName: string = "Transform";
+        let t: TransformComponent? = this.entity.getComponent(tName);
+        if (t != null) {
             if (t.x <= 0) {
                 t.x = 0;
                 if (t.vx < 0) {
@@ -135,20 +132,19 @@ class PlayerControllerComponent: Component {
         this.screenW = sw;
     }
 
-    override func getName() -> long {
-        var n = "PlayerController";
-        return n;
+    override func getName() -> string {
+        return "PlayerController";
     }
 
     override func init() {}
 
     override func update() {
         var numkeys: int = 0;
-        var state: long = SDL_GetKeyboardState(numkeys);
+        let state: long = SDL_GetKeyboardState(numkeys);
         if (state != 0) {
-            var tName = "Transform";
-            var t: TransformComponent = this.entity.getComponent(tName);
-            if (t != 0) {
+            let tName: string = "Transform";
+            let t: TransformComponent? = this.entity.getComponent(tName);
+            if (t != null) {
                 // SDL_SCANCODE_LEFT = 80, SDL_SCANCODE_A = 4
                 var left_pressed: int = 0;
                 if (state[80] != 0) left_pressed = 1;
@@ -180,10 +176,10 @@ class PlayerControllerComponent: Component {
 // Helper functions for building entities
 // ==========================================
 func create_ball(scene: Scene, x: int, y: int, vx: int, vy: int, size: int, r: int, g: int, b: int) {
-    var e: Entity = Entity();
-    var trans: TransformComponent = TransformComponent(x, y, vx, vy, size, size);
-    var bounce: BouncingPhysicsComponent = BouncingPhysicsComponent(640, 480);
-    var render: RectRendererComponent = RectRendererComponent(r, g, b);
+    let e: Entity = Entity();
+    let trans: TransformComponent = TransformComponent(x, y, vx, vy, size, size);
+    let bounce: BouncingPhysicsComponent = BouncingPhysicsComponent(640, 480);
+    let render: RectRendererComponent = RectRendererComponent(r, g, b);
     e.addComponent(trans);
     e.addComponent(bounce);
     e.addComponent(render);
@@ -191,34 +187,34 @@ func create_ball(scene: Scene, x: int, y: int, vx: int, vy: int, size: int, r: i
 }
 
 func create_block(scene: Scene, x: int, y: int, w: int, h: int, r: int, g: int, b: int) {
-    var e: Entity = Entity();
-    var trans: TransformComponent = TransformComponent(x, y, 0, 0, w, h);
-    var render: RectRendererComponent = RectRendererComponent(r, g, b);
+    let e: Entity = Entity();
+    let trans: TransformComponent = TransformComponent(x, y, 0, 0, w, h);
+    let render: RectRendererComponent = RectRendererComponent(r, g, b);
     e.addComponent(trans);
     e.addComponent(render);
     scene.addEntity(e);
 }
 
 func main() -> int {
-    var msg_start = "=== Glinda Framework (Entity-Component System) Started! ===\n";
+    let msg_start: string = "=== Glinda Framework (Entity-Component System) Started! ===\n";
     printf(msg_start);
-    var msg_ctrl = "Controls: [Left/Right] or [A/D] to move paddle, [ESC] to quit\n";
+    let msg_ctrl: string = "Controls: [Left/Right] or [A/D] to move paddle, [ESC] to quit\n";
     printf(msg_ctrl);
 
-    var app: GlindaApp = GlindaApp(640, 480);
-    var title = "Glinda ECS Framework Demo - Dorothy SDL2";
-    var err: int = app.initSDL(title);
+    let app: GlindaApp = GlindaApp(640, 480);
+    let title: string = "Glinda ECS Framework Demo - Dorothy SDL2";
+    let err: int = app.initSDL(title);
     if (err != 0) {
         return 1;
     }
 
-    var scene: Scene = Scene();
+    let scene: Scene = Scene();
 
     // 1. Create Player Paddle Entity (Transform + PlayerController + RectRenderer)
-    var player: Entity = Entity();
-    var pTrans: TransformComponent = TransformComponent(270, 440, 0, 0, 100, 16);
-    var pCtrl: PlayerControllerComponent = PlayerControllerComponent(8, 640);
-    var pRend: RectRendererComponent = RectRendererComponent(80, 180, 255);
+    let player: Entity = Entity();
+    let pTrans: TransformComponent = TransformComponent(270, 440, 0, 0, 100, 16);
+    let pCtrl: PlayerControllerComponent = PlayerControllerComponent(8, 640);
+    let pRend: RectRendererComponent = RectRendererComponent(80, 180, 255);
     player.addComponent(pTrans);
     player.addComponent(pCtrl);
     player.addComponent(pRend);
@@ -242,7 +238,7 @@ func main() -> int {
     app.setScene(scene);
     app.run();
 
-    var msg_end = "=== Glinda Framework Terminated Cleanly ===\n";
+    let msg_end: string = "=== Glinda Framework Terminated Cleanly ===\n";
     printf(msg_end);
     return 0;
 }
