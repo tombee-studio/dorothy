@@ -785,8 +785,36 @@ static string resolve_expr_class_name(LLVMGenCtx& ctx, Expression* expr) {
                 return elem_ti.type_name;
             }
         }
+        auto* ma = dynamic_cast<MemberAccess*>(ai->getPointer());
+        if (ma) {
+            string parent_class = resolve_expr_class_name(ctx, ma->getObject());
+            if (!parent_class.empty() && g_class_defs.count(parent_class)) {
+                int idx = g_class_defs[parent_class].fieldIndex(ma->getMember());
+                if (idx >= 0) {
+                    const auto& field = g_class_defs[parent_class].fields[idx];
+                    if (field.type == VarType::ARRAY) {
+                        string inner;
+                        if (field.struct_name.rfind("Array<", 0) == 0 && field.struct_name.back() == '>') {
+                            inner = field.struct_name.substr(6, field.struct_name.length() - 7);
+                        } else if (field.struct_name.length() > 2 && field.struct_name.substr(field.struct_name.length() - 2) == "[]") {
+                            inner = field.struct_name.substr(0, field.struct_name.length() - 2);
+                        }
+                        if (!inner.empty() && g_class_defs.count(inner)) {
+                            return inner;
+                        }
+                    }
+                }
+            }
+        }
     }
     return "";
+}
+
+static bool is_class_expr(LLVMGenCtx& ctx, Expression* expr) {
+    if (!expr) return false;
+    if (expr->llvm_declared_type(ctx) == VarType::CLASS || expr->llvm_etype(ctx) == VarType::CLASS) return true;
+    if (!resolve_expr_class_name(ctx, expr).empty()) return true;
+    return false;
 }
 
 static bool is_class_returning_call(LLVMGenCtx& ctx, Expression* expr) {
@@ -1802,6 +1830,21 @@ string Assign::llvm_rval(LLVMGenCtx& ctx) {
             ctx.out << "  call void @_dorothy_array_set(ptr " << loaded_arr << ", i64 " << idx << ", i64 " << val_i64 << ")\n";
             return val;
         }
+        if (ai->getPointer() && ai->getPointer()->llvm_declared_type(ctx) == VarType::ARRAY) {
+            string base = ai->getPointer()->llvm_rval(ctx);
+            string arr_ptr = ctx.fresh("arr.ptr");
+            ctx.out << "  " << arr_ptr << " = inttoptr i64 " << base << " to ptr\n";
+            string idx = ai->getIndex()->llvm_rval(ctx);
+            string val = _expr->llvm_rval(ctx);
+            VarType et = _expr->llvm_etype(ctx);
+            string val_i64 = val;
+            if (et == VarType::DOUBLE || et == VarType::FLOAT) {
+                val_i64 = ctx.fresh("set.bitcast");
+                ctx.out << "  " << val_i64 << " = bitcast double " << val << " to i64\n";
+            }
+            ctx.out << "  call void @_dorothy_array_set(ptr " << arr_ptr << ", i64 " << idx << ", i64 " << val_i64 << ")\n";
+            return val;
+        }
     }
 
     string ptr = _leftside->llvm_lval(ctx);
@@ -1964,13 +2007,20 @@ static VarType member_field_type(LLVMGenCtx& ctx, const string& varname,
 }
 
 string MemberAccess::llvm_rval(LLVMGenCtx& ctx) {
-    auto* var_expr_check = dynamic_cast<Variable*>(_object);
-    if (var_expr_check && ctx.var_types.count(var_expr_check->getVarName()) && ctx.var_types[var_expr_check->getVarName()] == VarType::ARRAY) {
-        if (_member == "length" || _member == "size") {
+    if (_member == "length" || _member == "size") {
+        auto* var_expr_check = dynamic_cast<Variable*>(_object);
+        if (var_expr_check && ctx.var_types.count(var_expr_check->getVarName()) && ctx.var_types[var_expr_check->getVarName()] == VarType::ARRAY) {
             string loaded = ctx.fresh("arr.ptr");
             ctx.out << "  " << loaded << " = load ptr, ptr " << ctx.vars[var_expr_check->getVarName()] << "\n";
             string res = ctx.fresh("arr.len");
             ctx.out << "  " << res << " = call i64 @_dorothy_array_size(ptr " << loaded << ")\n";
+            return res;
+        } else if (_object->llvm_declared_type(ctx) == VarType::ARRAY) {
+            string obj_i64 = _object->llvm_rval(ctx);
+            string arr_ptr = ctx.fresh("arr.ptr");
+            ctx.out << "  " << arr_ptr << " = inttoptr i64 " << obj_i64 << " to ptr\n";
+            string res = ctx.fresh("arr.len");
+            ctx.out << "  " << res << " = call i64 @_dorothy_array_size(ptr " << arr_ptr << ")\n";
             return res;
         }
     }
@@ -2001,7 +2051,7 @@ string MemberAccess::llvm_rval(LLVMGenCtx& ctx) {
         string fptr = ctx.fresh("field.ptr");
         ctx.out << "  " << fptr << " = getelementptr %class." << cname
                 << ", ptr " << obj_ptr << ", i32 0, i32 " << (fidx + 2) << "\n";
-        if (ftype == VarType::CLASS || ftype == VarType::STRING) {
+        if (ftype == VarType::CLASS || ftype == VarType::STRING || ftype == VarType::ARRAY) {
             string reg = ctx.fresh("field.ptr");
             ctx.out << "  " << reg << " = load ptr, ptr " << fptr << "\n";
             string r_i64 = ctx.fresh("field.i64");
@@ -2066,6 +2116,15 @@ string MemberAccess::llvm_lval(LLVMGenCtx& ctx) {
 }
 
 VarType MemberAccess::llvm_declared_type(LLVMGenCtx& ctx) const {
+    if (_member == "length" || _member == "size") {
+        auto* var_expr_check = dynamic_cast<Variable*>(_object);
+        if (var_expr_check && ctx.var_types.count(var_expr_check->getVarName()) && ctx.var_types[var_expr_check->getVarName()] == VarType::ARRAY) {
+            return VarType::LONG;
+        }
+        if (_object->llvm_declared_type(ctx) == VarType::ARRAY) {
+            return VarType::LONG;
+        }
+    }
     string obj_var = _object->getVarName();
     if (!obj_var.empty() && ctx.var_types.count(obj_var) && ctx.var_types[obj_var] == VarType::ARRAY) {
         if (_member == "length" || _member == "size") {
@@ -2166,6 +2225,33 @@ VarType ArrayIndex::llvm_declared_type(LLVMGenCtx& ctx) const {
     if (it != ctx.array_elem_types.end()) {
         return it->second;
     }
+    auto* ma = dynamic_cast<MemberAccess*>(_pointer);
+    if (ma) {
+        string cname = resolve_expr_class_name(ctx, ma->getObject());
+        if (!cname.empty() && g_class_defs.count(cname)) {
+            int idx = g_class_defs[cname].fieldIndex(ma->getMember());
+            if (idx >= 0) {
+                const auto& f = g_class_defs[cname].fields[idx];
+                if (f.type == VarType::ARRAY) {
+                    string inner;
+                    if (f.struct_name.rfind("Array<", 0) == 0 && f.struct_name.back() == '>') {
+                        inner = f.struct_name.substr(6, f.struct_name.length() - 7);
+                    } else if (f.struct_name.length() > 2 && f.struct_name.substr(f.struct_name.length() - 2) == "[]") {
+                        inner = f.struct_name.substr(0, f.struct_name.length() - 2);
+                    }
+                    if (!inner.empty()) {
+                        if (inner == "int") return VarType::INT;
+                        if (inner == "char") return VarType::CHAR;
+                        if (inner == "long") return VarType::LONG;
+                        if (inner == "float") return VarType::FLOAT;
+                        if (inner == "double") return VarType::DOUBLE;
+                        if (inner == "string") return VarType::STRING;
+                        return VarType::CLASS;
+                    }
+                }
+            }
+        }
+    }
     return VarType::CHAR;
 }
 
@@ -2181,6 +2267,21 @@ string ArrayIndex::llvm_rval(LLVMGenCtx& ctx) {
         string idx = _index->llvm_rval(ctx);
         string raw_val = ctx.fresh("arr.get");
         ctx.out << "  " << raw_val << " = call i64 @_dorothy_array_get(ptr " << loaded_arr << ", i64 " << idx << ")\n";
+        VarType elem_type = llvm_declared_type(ctx);
+        if (elem_type == VarType::DOUBLE || elem_type == VarType::FLOAT) {
+            string dbl_reg = ctx.fresh("get.dbl");
+            ctx.out << "  " << dbl_reg << " = bitcast i64 " << raw_val << " to double\n";
+            return dbl_reg;
+        }
+        return raw_val;
+    }
+    if (_pointer->llvm_declared_type(ctx) == VarType::ARRAY) {
+        string base = _pointer->llvm_rval(ctx);
+        string arr_ptr = ctx.fresh("arr.ptr");
+        ctx.out << "  " << arr_ptr << " = inttoptr i64 " << base << " to ptr\n";
+        string idx = _index->llvm_rval(ctx);
+        string raw_val = ctx.fresh("arr.get");
+        ctx.out << "  " << raw_val << " = call i64 @_dorothy_array_get(ptr " << arr_ptr << ", i64 " << idx << ")\n";
         VarType elem_type = llvm_declared_type(ctx);
         if (elem_type == VarType::DOUBLE || elem_type == VarType::FLOAT) {
             string dbl_reg = ctx.fresh("get.dbl");
@@ -2340,7 +2441,7 @@ string ClassInit::llvm_rval(LLVMGenCtx& ctx) {
                 << ", ptr " << raw_mem << ", i32 0, i32 " << (fi + 2) << "\n";
         if (is_float_type(cdef.fields[fi].type)) {
             ctx.out << "  store " << tstr << " 0.0, ptr " << fptr << "\n";
-        } else if (cdef.fields[fi].type == VarType::CLASS || cdef.fields[fi].type == VarType::STRING) {
+        } else if (cdef.fields[fi].type == VarType::CLASS || cdef.fields[fi].type == VarType::STRING || cdef.fields[fi].type == VarType::ARRAY) {
             ctx.out << "  store ptr null, ptr " << fptr << "\n";
         } else {
             ctx.out << "  store " << tstr << " 0, ptr " << fptr << "\n";
@@ -2397,6 +2498,11 @@ string ArrayLiteralExp::llvm_rval(LLVMGenCtx& ctx) {
             val_i64 = ctx.fresh("elem.bitcast");
             ctx.out << "  " << val_i64 << " = bitcast double " << elem_rval << " to i64\n";
         }
+        if (is_class_expr(ctx, _elements[i])) {
+            string elem_ptr = ctx.fresh("lit.elem.ptr");
+            ctx.out << "  " << elem_ptr << " = inttoptr i64 " << val_i64 << " to ptr\n";
+            ctx.out << "  call void @_dorothy_retain(ptr " << elem_ptr << ")\n";
+        }
         ctx.out << "  call void @_dorothy_array_push(ptr " << arr_reg << ", i64 " << val_i64 << ")\n";
     }
     string ret_i64 = ctx.fresh("arr.i64");
@@ -2438,6 +2544,11 @@ string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
                 val_i64 = ctx.fresh("push.bitcast");
                 ctx.out << "  " << val_i64 << " = bitcast double " << val << " to i64\n";
             }
+            if (is_class_expr(ctx, _args[0])) {
+                string elem_ptr = ctx.fresh("push.elem.ptr");
+                ctx.out << "  " << elem_ptr << " = inttoptr i64 " << val_i64 << " to ptr\n";
+                ctx.out << "  call void @_dorothy_retain(ptr " << elem_ptr << ")\n";
+            }
             ctx.out << "  call void @_dorothy_array_push(ptr " << obj_ptr << ", i64 " << val_i64 << ")\n";
             return "0";
         }
@@ -2452,6 +2563,11 @@ string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
             }
             string res = ctx.fresh("arr.rm_res");
             ctx.out << "  " << res << " = call i64 @_dorothy_array_remove(ptr " << obj_ptr << ", i64 " << val_i64 << ")\n";
+            if (is_class_expr(ctx, _args[0])) {
+                string elem_ptr = ctx.fresh("rm.elem.ptr");
+                ctx.out << "  " << elem_ptr << " = inttoptr i64 " << val_i64 << " to ptr\n";
+                ctx.out << "  call void @_dorothy_release(ptr " << elem_ptr << ")\n";
+            }
             return res;
         }
         if (_method_name == "size" || _method_name == "length") {

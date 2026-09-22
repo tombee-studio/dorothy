@@ -228,21 +228,24 @@ void Parser::parse_struct_def(vector<Token> &tokens) {
                 throw ParseError("expected field name", tokens[_pos]);
             if (consume(tokens, (Token::Type)':').type == Token::NONE)
                 throw ParseError("expected ':' in field declaration", tokens[_pos]);
-            if (tokens[_pos].type == Token::TK_ID && _struct_defs.count(tokens[_pos].id)) {
-                string field_struct = tokens[_pos].id;
-                _pos++;
-                if (consume(tokens, (Token::Type)';').type == Token::NONE)
-                    throw ParseError("expected ';' after field declaration", tokens[_pos]);
-                sdef.fields.push_back({fname.id, VarType::STRUCT, field_struct});
-            } else if (is_type_keyword(tokens[_pos].type)) {
-                VarType ftype = token_to_vartype(tokens[_pos].type);
-                _pos++;
-                if (consume(tokens, (Token::Type)';').type == Token::NONE)
-                    throw ParseError("expected ';' after field declaration", tokens[_pos]);
-                sdef.fields.push_back({fname.id, ftype, ""});
+            TypeInfo ti = parse_type(tokens);
+            if (consume(tokens, (Token::Type)';').type == Token::NONE)
+                throw ParseError("expected ';' after field declaration", tokens[_pos]);
+            if (sdef.fieldIndex(fname.id) >= 0)
+                throw ParseError("duplicate field '" + fname.id + "' in struct " + struct_name, fname);
+
+            if (ti.is_array()) {
+                string elem_name = ti.get_element_type().type_name.empty() ?
+                    (ti.get_element_type().base_type == VarType::STRING ? "string" :
+                     ti.get_element_type().base_type == VarType::INT ? "int" :
+                     ti.get_element_type().base_type == VarType::DOUBLE ? "double" : "long")
+                    : ti.get_element_type().type_name;
+                string arr_type_name = "Array<" + elem_name + ">";
+                sdef.fields.push_back({fname.id, VarType::ARRAY, arr_type_name, false});
+            } else if (ti.base_type == VarType::STRUCT) {
+                sdef.fields.push_back({fname.id, VarType::STRUCT, ti.type_name, false});
             } else {
-                throw ParseError("expected type keyword or struct name in field declaration",
-                                 tokens[_pos]);
+                sdef.fields.push_back({fname.id, ti.base_type, "", false});
             }
         } else if (tokens[_pos].type == Token::KW_CONSTRUCTOR) {
             // constructor(params) { body }
@@ -330,37 +333,26 @@ void Parser::parse_class_def(vector<Token> &tokens) {
             if (consume(tokens, (Token::Type)':').type == Token::NONE)
                 throw ParseError("expected ':' in field declaration", tokens[_pos]);
 
-            if (tokens[_pos].type == Token::TK_ID && _class_defs.count(tokens[_pos].id)) {
-                string field_class = tokens[_pos].id;
-                _pos++;
-                bool is_nullable = false;
-                if (tokens[_pos].type == (Token::Type)'?') {
-                    is_nullable = true;
-                    _pos++;
-                }
-                if (consume(tokens, (Token::Type)';').type == Token::NONE)
-                    throw ParseError("expected ';' after field declaration", tokens[_pos]);
-                if (cdef.fieldIndex(fname.id) >= 0)
-                    throw ParseError("duplicate field '" + fname.id + "' in class " + class_name, fname);
-                cdef.fields.push_back({fname.id, VarType::CLASS, field_class, is_nullable});
-            } else if (tokens[_pos].type == Token::TK_ID && _struct_defs.count(tokens[_pos].id)) {
-                string field_struct = tokens[_pos].id;
-                _pos++;
-                if (consume(tokens, (Token::Type)';').type == Token::NONE)
-                    throw ParseError("expected ';' after field declaration", tokens[_pos]);
-                if (cdef.fieldIndex(fname.id) >= 0)
-                    throw ParseError("duplicate field '" + fname.id + "' in class " + class_name, fname);
-                cdef.fields.push_back({fname.id, VarType::STRUCT, field_struct, false});
-            } else if (is_type_keyword(tokens[_pos].type)) {
-                VarType ftype = token_to_vartype(tokens[_pos].type);
-                _pos++;
-                if (consume(tokens, (Token::Type)';').type == Token::NONE)
-                    throw ParseError("expected ';' after field declaration", tokens[_pos]);
-                if (cdef.fieldIndex(fname.id) >= 0)
-                    throw ParseError("duplicate field '" + fname.id + "' in class " + class_name, fname);
-                cdef.fields.push_back({fname.id, ftype, "", false});
+            TypeInfo ti = parse_type(tokens);
+            if (consume(tokens, (Token::Type)';').type == Token::NONE)
+                throw ParseError("expected ';' after field declaration", tokens[_pos]);
+            if (cdef.fieldIndex(fname.id) >= 0)
+                throw ParseError("duplicate field '" + fname.id + "' in class " + class_name, fname);
+
+            if (ti.is_array()) {
+                string elem_name = ti.get_element_type().type_name.empty() ?
+                    (ti.get_element_type().base_type == VarType::STRING ? "string" :
+                     ti.get_element_type().base_type == VarType::INT ? "int" :
+                     ti.get_element_type().base_type == VarType::DOUBLE ? "double" : "long")
+                    : ti.get_element_type().type_name;
+                string arr_type_name = "Array<" + elem_name + ">";
+                cdef.fields.push_back({fname.id, VarType::ARRAY, arr_type_name, ti.is_nullable});
+            } else if (ti.base_type == VarType::CLASS) {
+                cdef.fields.push_back({fname.id, VarType::CLASS, ti.type_name, ti.is_nullable});
+            } else if (ti.base_type == VarType::STRUCT) {
+                cdef.fields.push_back({fname.id, VarType::STRUCT, ti.type_name, false});
             } else {
-                throw ParseError("expected type in field declaration", tokens[_pos]);
+                cdef.fields.push_back({fname.id, ti.base_type, "", false});
             }
         } else if (tokens[_pos].type == Token::KW_CONSTRUCTOR) {
             // constructor(params) { body }

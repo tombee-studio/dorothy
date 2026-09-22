@@ -279,3 +279,60 @@ func main() -> int {
 )";
     EXPECT_EQ(run_llvm_stdout(src), "Alice Dorothy\n");
 }
+
+TEST(ArrayTest, ClassMemberArrayPushAndLength) {
+    std::string src = R"(
+class Item {
+    var id: int;
+    func Item(id: int) {
+        this.id = id;
+    }
+}
+
+class Inventory {
+    var items: Array<Item>;
+    func Inventory() {
+        this.items = [];
+    }
+    func addItem(item: Item) {
+        this.items.push(item);
+    }
+    func getCount() -> int {
+        return this.items.length;
+    }
+}
+
+func main() -> int {
+    var inv: Inventory = Inventory();
+    inv.addItem(Item(10));
+    inv.addItem(Item(20));
+    inv.addItem(Item(30));
+    return inv.getCount();
+}
+)";
+    EXPECT_EQ(run_llvm(src), 3);
+}
+
+TEST(ArrayTest, ClassMemberIntArrayIndexAccess) {
+    std::string src = R"(
+class Grid {
+    var cells: int[];
+    func Grid() {
+        this.cells = [10, 20, 30, 40];
+    }
+    func getCell(idx: int) -> int {
+        return this.cells[idx];
+    }
+    func setCell(idx: int, val: int) {
+        this.cells[idx] = val;
+    }
+}
+
+func main() -> int {
+    var g: Grid = Grid();
+    g.setCell(2, 99);
+    return g.getCell(2);
+}
+)";
+    EXPECT_EQ(run_llvm(src), 99);
+}
