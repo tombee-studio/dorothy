@@ -32,6 +32,7 @@ struct FieldInfo {
   string name;
   VarType type;
   string struct_name; // non-empty when type == STRUCT
+  bool is_nullable = false;
 };
 
 struct ConstructorInfo {
@@ -63,6 +64,7 @@ struct MethodInfo {
   vector<DeclVar *> params;
   VarType ret_type;
   string ret_type_name; // struct or class name
+  bool is_ret_nullable = false;
   Statement *body = nullptr;
   bool is_abstract = false;
   bool is_override = false;
@@ -136,16 +138,19 @@ protected:
   string _id;
   VarType _type;
   bool _is_const;
-  string _struct_name; // non-empty when _type == VarType::STRUCT
+  string _struct_name; // non-empty when _type == VarType::STRUCT or CLASS
+  bool _is_nullable;
 
 public:
   DeclVar(string id, VarType type = VarType::LONG, bool is_const = false,
-          string struct_name = "")
-      : _id(id), _type(type), _is_const(is_const), _struct_name(struct_name) {}
+          string struct_name = "", bool is_nullable = false)
+      : _id(id), _type(type), _is_const(is_const), _struct_name(struct_name),
+        _is_nullable(is_nullable) {}
 
   VarType getType() const { return _type; }
   const string &getId() const { return _id; }
   bool isConst() const { return _is_const; }
+  bool isNullable() const { return _is_nullable; }
   const string &getStructName() const { return _struct_name; }
   const string &getClassName() const { return _struct_name; }
 
@@ -161,9 +166,10 @@ class InitializedDeclVar : public DeclVar {
 
 public:
   InitializedDeclVar(string id, VarType type, bool is_const, Expression *init,
-                     string struct_name = "")
-      : DeclVar(id, type, is_const, struct_name), _init(init) {}
+                     string struct_name = "", bool is_nullable = false)
+      : DeclVar(id, type, is_const, struct_name, is_nullable), _init(init) {}
 
+  Expression *getInit() const { return _init; }
   virtual void print(ostream &, int tab);
   virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                        int);
@@ -207,14 +213,16 @@ protected:
   VarType _ret_type;
   string _ret_struct_name;
   bool _has_explicit_ret_type;
+  bool _is_ret_nullable;
 
 public:
   Function(string id, vector<DeclVar *> args, Statement *body,
            VarType ret_type = VarType::LONG, string ret_struct_name = "",
-           bool has_explicit_ret_type = false)
+           bool has_explicit_ret_type = false, bool is_ret_nullable = false)
       : _id(id), _args(args), _body(body), _ret_type(ret_type),
         _ret_struct_name(ret_struct_name),
-        _has_explicit_ret_type(has_explicit_ret_type) {}
+        _has_explicit_ret_type(has_explicit_ret_type),
+        _is_ret_nullable(is_ret_nullable) {}
   virtual void print(ostream &, int tab);
   virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                        int);
@@ -225,6 +233,7 @@ public:
   const string &getRetStructName() const { return _ret_struct_name; }
   const string &getRetClassName() const { return _ret_struct_name; }
   bool hasExplicitRetType() const { return _has_explicit_ret_type; }
+  bool isRetNullable() const { return _is_ret_nullable; }
   Statement *getBody() const { return _body; }
   virtual bool isImport() const { return false; }
 };
@@ -652,6 +661,23 @@ public:
   virtual void lcompile(vector<Code> &, map<string, int> &, map<string, int> &,
                         int);
   virtual string llvm_rval(LLVMGenCtx &);
+};
+
+class NullExp : public Expression {
+public:
+  NullExp() {}
+
+  void print(ostream &os, int tab) override;
+  void compile(vector<Code> &, map<string, int> &, map<string, int> &, int) override;
+  void lcompile(vector<Code> &, map<string, int> &, map<string, int> &, int) override;
+  string llvm_rval(LLVMGenCtx &) override;
+  VarType llvm_etype(LLVMGenCtx &) const override { return VarType::CLASS; }
+  VarType llvm_declared_type(LLVMGenCtx &) const override { return VarType::CLASS; }
+  VarType compile_type(map<string, int> &) const override { return VarType::CLASS; }
+  VarType static_type(const map<string, VarType> &,
+                      const map<string, VarType> &) const override {
+    return VarType::CLASS;
+  }
 };
 
 class IntExp : public Expression {

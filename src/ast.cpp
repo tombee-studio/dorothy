@@ -890,6 +890,18 @@ void GEExp::lcompile(vector<Code>& codes, map<string, int>& vars,
     codes.push_back(Code::makeCode("PUSHR 2 0"));
 }
 
+void NullExp::print(ostream& os, int tab) { os << "null"; }
+
+void NullExp::compile(vector<Code>& ofs, map<string, int>& vars,
+                     map<string, int>& functions, int offset) {
+    ofs.push_back(Code::makeCode("PUSHI 0 0"));
+}
+
+void NullExp::lcompile(vector<Code>& codes, map<string, int>& vars,
+                      map<string, int>& functions, int offset) {
+    codes.push_back(Code::makeCode(Code::PUSHI, 0, 0));
+}
+
 void IntExp::print(ostream& os, int tab) { os << _int_val; }
 
 void IntExp::compile(vector<Code>& ofs, map<string, int>& vars,

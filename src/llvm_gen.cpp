@@ -657,7 +657,7 @@ static void emit_all_classes(LLVMGenCtx& ctx) {
     ctx.classes_emitted = true;
 
     if (!g_class_defs.empty()) {
-        // Declare malloc and free if not already declared by C header
+        // Declare malloc, free, puts, exit if not already declared by C header
         if (!ctx.c_imported_funcs.count("malloc")) {
             ctx.out << "declare ptr @malloc(i64)\n\n";
             ctx.c_imported_funcs["malloc"] = {"ptr", {"i64"}, false};
@@ -666,6 +666,29 @@ static void emit_all_classes(LLVMGenCtx& ctx) {
             ctx.out << "declare void @free(ptr)\n\n";
             ctx.c_imported_funcs["free"] = {"void", {"ptr"}, false};
         }
+        if (!ctx.c_imported_funcs.count("puts")) {
+            ctx.out << "declare i32 @puts(ptr)\n\n";
+            ctx.c_imported_funcs["puts"] = {"i32", {"ptr"}, false};
+        }
+        if (!ctx.c_imported_funcs.count("exit")) {
+            ctx.out << "declare void @exit(i32)\n\n";
+            ctx.c_imported_funcs["exit"] = {"void", {"i32"}, false};
+        }
+
+        ctx.out << "@.str.npe = private unnamed_addr constant [57 x i8] c\"NullPointerException: Attempted to access null reference\\00\", align 1\n\n";
+
+        ctx.out << "define void @_dorothy_check_null(ptr %obj) {\n"
+                << "entry:\n"
+                << "  %is_null = icmp eq ptr %obj, null\n"
+                << "  br i1 %is_null, label %npe, label %ok\n"
+                << "npe:\n"
+                << "  %msg = getelementptr [57 x i8], ptr @.str.npe, i32 0, i32 0\n"
+                << "  call i32 @puts(ptr %msg)\n"
+                << "  call void @exit(i32 1)\n"
+                << "  unreachable\n"
+                << "ok:\n"
+                << "  ret void\n"
+                << "}\n\n";
 
         // Emit ARC helper functions
         ctx.out << "define void @_dorothy_retain(ptr %obj) {\n"
@@ -772,6 +795,7 @@ void DeclVar::llvm_emit(LLVMGenCtx& ctx) {
         ctx.vars[_id] = ptr;
         ctx.var_types[_id] = VarType::CLASS;
         ctx.class_var_types[_id] = _struct_name;
+        ctx.class_var_nullable[_id] = _is_nullable;
         if (_is_const) ctx.const_vars.insert(_id);
         ctx.register_class_var(ptr);
         return;
@@ -973,6 +997,7 @@ void DeclVar::llvm_param(LLVMGenCtx& ctx, const string& param_reg) {
     ctx.var_types[_id] = _type;
     if (_type == VarType::CLASS) {
         ctx.class_var_types[_id] = _struct_name;
+        ctx.class_var_nullable[_id] = _is_nullable;
         ctx.out << "  call void @_dorothy_retain(ptr " << param_reg << ")\n";
         ctx.register_class_var(ptr);
     }
@@ -1430,6 +1455,11 @@ string Assign::llvm_rval(LLVMGenCtx& ctx) {
     string val = _expr->llvm_rval(ctx);  // in canonical form
     VarType tgt_declared = _leftside->llvm_declared_type(ctx);
     if (tgt_declared == VarType::CLASS) {
+        if (dynamic_cast<NullExp*>(_expr)) {
+            if (!varname.empty() && ctx.class_var_nullable.count(varname) && !ctx.class_var_nullable[varname]) {
+                throw CompileError(("cannot assign null to non-nullable variable: " + varname).c_str());
+            }
+        }
         string ptr_val = ctx.fresh("assign.ptr");
         ctx.out << "  " << ptr_val << " = inttoptr i64 " << val << " to ptr\n";
         bool rhs_is_new_or_returned = is_class_returning_call(ctx, _expr);
@@ -1569,6 +1599,7 @@ string MemberAccess::llvm_rval(LLVMGenCtx& ctx) {
             obj_ptr = ctx.fresh("obj.ptr");
             ctx.out << "  " << obj_ptr << " = inttoptr i64 " << obj_i64 << " to ptr\n";
         }
+        ctx.out << "  call void @_dorothy_check_null(ptr " << obj_ptr << ")\n";
 
         const auto& cdef = g_class_defs[cname];
         int fidx = cdef.fieldIndex(_member);
@@ -1621,6 +1652,7 @@ string MemberAccess::llvm_lval(LLVMGenCtx& ctx) {
             obj_ptr = ctx.fresh("obj.ptr");
             ctx.out << "  " << obj_ptr << " = inttoptr i64 " << obj_i64 << " to ptr\n";
         }
+        ctx.out << "  call void @_dorothy_check_null(ptr " << obj_ptr << ")\n";
 
         const auto& cdef = g_class_defs[cname];
         int fidx = cdef.fieldIndex(_member);
@@ -1953,6 +1985,7 @@ string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
         obj_ptr = ctx.fresh("obj.ptr");
         ctx.out << "  " << obj_ptr << " = inttoptr i64 " << obj_i64 << " to ptr\n";
     }
+    ctx.out << "  call void @_dorothy_check_null(ptr " << obj_ptr << ")\n";
 
     if (cname.empty() || !g_class_defs.count(cname)) {
         throw CompileError(("cannot resolve class for method call: " + _method_name).c_str());
@@ -2029,5 +2062,11 @@ void CallMethodSt::llvm_emit(LLVMGenCtx& ctx) {
 
 void ClassDef::llvm_emit(LLVMGenCtx& ctx) {
     emit_all_classes(ctx);
+}
+
+// ===== NullExp =====
+
+string NullExp::llvm_rval(LLVMGenCtx&) {
+    return "0";
 }
 

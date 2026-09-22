@@ -52,6 +52,7 @@ struct LLVMGenCtx {
     std::map<std::string, VarType> array_elem_types;
     // Class support
     std::map<std::string, std::string> class_var_types;
+    std::map<std::string, bool> class_var_nullable;
     std::string this_class;
     std::string this_ptr_reg;
     bool classes_emitted = false;
