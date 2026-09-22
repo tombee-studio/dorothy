@@ -39,6 +39,7 @@ struct Token {
         KW_ABSTRACT,
         KW_OVERRIDE,
         KW_NULL,
+        KW_STRING,
         TK_ARROW,     // ->
         TK_RAWSTRING, // "string literal" (raw content, not expanded to char array)
     } type;

@@ -27,6 +27,8 @@ void Lexer::tokenize(string p, int* ppos) {
         if (tokenize_keyword(p, ppos, "int", Token::KW_INT)) continue;
         if (tokenize_keyword(p, ppos, "long", Token::KW_LONG)) continue;
         if (tokenize_keyword(p, ppos, "char", Token::KW_CHAR)) continue;
+        if (tokenize_keyword(p, ppos, "string", Token::KW_STRING)) continue;
+        if (tokenize_keyword(p, ppos, "String", Token::KW_STRING)) continue;
         if (tokenize_keyword(p, ppos, "while", Token::KW_WHILE)) continue;
         if (tokenize_keyword(p, ppos, "return", Token::KW_RETURN)) continue;
         if (tokenize_keyword(p, ppos, "func", Token::KW_FUNC)) continue;

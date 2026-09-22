@@ -84,6 +84,75 @@ static std::pair<string, vector<string>> parse_c_func_type(const string& type_st
     return {ret_llvm, params};
 }
 
+// Escape raw characters for LLVM IR string literal constant
+static string llvm_escape_string(const string& s) {
+    string out;
+    for (unsigned char c : s) {
+        if (c >= 32 && c <= 126 && c != '\\' && c != '"') {
+            out += c;
+        } else {
+            char buf[8];
+            snprintf(buf, sizeof(buf), "\\%02X", c);
+            out += buf;
+        }
+    }
+    return out;
+}
+
+static void emit_string_runtime(LLVMGenCtx& ctx) {
+    if (ctx.str_runtime_emitted) return;
+    ctx.str_runtime_emitted = true;
+
+    if (!ctx.c_imported_funcs.count("malloc")) {
+        ctx.out << "declare ptr @malloc(i64)\n\n";
+        ctx.c_imported_funcs["malloc"] = {"ptr", {"i64"}, false};
+    }
+    if (!ctx.c_imported_funcs.count("strlen")) {
+        ctx.out << "declare i64 @strlen(ptr)\n\n";
+        ctx.c_imported_funcs["strlen"] = {"i64", {"ptr"}, false};
+    }
+    if (!ctx.c_imported_funcs.count("strcpy")) {
+        ctx.out << "declare ptr @strcpy(ptr, ptr)\n\n";
+        ctx.c_imported_funcs["strcpy"] = {"ptr", {"ptr", "ptr"}, false};
+    }
+    if (!ctx.c_imported_funcs.count("strcat")) {
+        ctx.out << "declare ptr @strcat(ptr, ptr)\n\n";
+        ctx.c_imported_funcs["strcat"] = {"ptr", {"ptr", "ptr"}, false};
+    }
+    if (!ctx.c_imported_funcs.count("strcmp")) {
+        ctx.out << "declare i32 @strcmp(ptr, ptr)\n\n";
+        ctx.c_imported_funcs["strcmp"] = {"i32", {"ptr", "ptr"}, false};
+    }
+
+    ctx.out << "@.str.empty = private unnamed_addr constant [1 x i8] c\"\\00\", align 1\n\n";
+
+    ctx.out << "define ptr @_dorothy_str_concat(ptr %s1, ptr %s2) {\n"
+            << "entry:\n"
+            << "  %s1_null = icmp eq ptr %s1, null\n"
+            << "  %s1_safe = select i1 %s1_null, ptr @.str.empty, ptr %s1\n"
+            << "  %s2_null = icmp eq ptr %s2, null\n"
+            << "  %s2_safe = select i1 %s2_null, ptr @.str.empty, ptr %s2\n"
+            << "  %l1 = call i64 @strlen(ptr %s1_safe)\n"
+            << "  %l2 = call i64 @strlen(ptr %s2_safe)\n"
+            << "  %tot = add i64 %l1, %l2\n"
+            << "  %tot1 = add i64 %tot, 1\n"
+            << "  %mem = call ptr @malloc(i64 %tot1)\n"
+            << "  %c1 = call ptr @strcpy(ptr %mem, ptr %s1_safe)\n"
+            << "  %c2 = call ptr @strcat(ptr %mem, ptr %s2_safe)\n"
+            << "  ret ptr %mem\n"
+            << "}\n\n";
+
+    ctx.out << "define i32 @_dorothy_str_cmp(ptr %s1, ptr %s2) {\n"
+            << "entry:\n"
+            << "  %s1_null = icmp eq ptr %s1, null\n"
+            << "  %s1_safe = select i1 %s1_null, ptr @.str.empty, ptr %s1\n"
+            << "  %s2_null = icmp eq ptr %s2, null\n"
+            << "  %s2_safe = select i1 %s2_null, ptr @.str.empty, ptr %s2\n"
+            << "  %res = call i32 @strcmp(ptr %s1_safe, ptr %s2_safe)\n"
+            << "  ret i32 %res\n"
+            << "}\n\n";
+}
+
 // Strip ANSI escape codes from a string.
 static string strip_ansi(const string& s) {
     string out;
@@ -228,7 +297,11 @@ static string emitCImportedCall(LLVMGenCtx& ctx, const string& id,
                     }
                 } else {
                     VarType declared = args[i]->llvm_declared_type(ctx);
-                    if (declared == VarType::LONG) {
+                    if (declared == VarType::STRING || dynamic_cast<StringExp*>(args[i])) {
+                        string r = ctx.fresh("va.ptr");
+                        ctx.out << "  " << r << " = inttoptr i64 " << val << " to ptr\n";
+                        final_args.push_back({"ptr", r});
+                    } else if (declared == VarType::LONG) {
                         // Explicitly long — keep as i64
                         final_args.push_back({"i64", val});
                     } else {
@@ -656,6 +729,21 @@ static void emit_all_classes(LLVMGenCtx& ctx) {
     if (ctx.classes_emitted) return;
     ctx.classes_emitted = true;
 
+    emit_string_runtime(ctx);
+
+    for (const auto& pair : g_class_defs) {
+        const auto& cdef = pair.second;
+        if (cdef.constructor && cdef.constructor->body) {
+            cdef.constructor->body->collect_strings(ctx);
+        }
+        for (auto* m : cdef.vtable_methods) {
+            if (m && m->body) m->body->collect_strings(ctx);
+        }
+        for (const auto& mp : cdef.methods) {
+            if (mp.second && mp.second->body) mp.second->body->collect_strings(ctx);
+        }
+    }
+
     if (!g_class_defs.empty()) {
         // Declare malloc, free, puts, exit if not already declared by C header
         if (!ctx.c_imported_funcs.count("malloc")) {
@@ -800,6 +888,16 @@ void DeclVar::llvm_emit(LLVMGenCtx& ctx) {
         ctx.register_class_var(ptr);
         return;
     }
+    if (_type == VarType::STRING) {
+        int n = ctx.counter++;
+        string ptr = "%" + _id + ".addr." + to_string(n);
+        ctx.out << "  " << ptr << " = alloca ptr\n";
+        ctx.out << "  store ptr null, ptr " << ptr << "\n";
+        ctx.vars[_id] = ptr;
+        ctx.var_types[_id] = VarType::STRING;
+        if (_is_const) ctx.const_vars.insert(_id);
+        return;
+    }
     if (_type == VarType::STRUCT) {
         if (!g_struct_defs.count(_struct_name))
             throw CompileError(("undefined struct type: " + _struct_name).c_str());
@@ -831,6 +929,8 @@ void InitializedDeclVar::llvm_emit(LLVMGenCtx& ctx) {
         if (ci) {
             _type = VarType::CLASS;
             _struct_name = ci->getClassName();
+        } else if (dynamic_cast<StringExp*>(_init)) {
+            _type = VarType::STRING;
         } else if (auto* cfe = dynamic_cast<CallFuncExp*>(_init)) {
             if (ctx.func_return_struct.count(cfe->getId())) {
                 _type = VarType::STRUCT;
@@ -862,6 +962,14 @@ void InitializedDeclVar::llvm_emit(LLVMGenCtx& ctx) {
         if (!rhs_is_new_or_returned) {
             ctx.out << "  call void @_dorothy_retain(ptr " << ptr_val << ")\n";
         }
+        ctx.out << "  store ptr " << ptr_val << ", ptr " << ctx.vars[_id] << "\n";
+        return;
+    }
+
+    if (_type == VarType::STRING) {
+        string val = _init->llvm_rval(ctx);
+        string ptr_val = ctx.fresh("init.str");
+        ctx.out << "  " << ptr_val << " = inttoptr i64 " << val << " to ptr\n";
         ctx.out << "  store ptr " << ptr_val << ", ptr " << ctx.vars[_id] << "\n";
         return;
     }
@@ -1238,8 +1346,8 @@ prepareCallArgs(LLVMGenCtx& ctx, const std::string& id,
             VarType src_c = args[i]->llvm_etype(ctx);
             if (pit != ctx.func_param_info.end() && i < (int)pit->second.size()) {
                 VarType tgt = pit->second[i].type;
-                if (tgt == VarType::CLASS) {
-                    string r = ctx.fresh("arg.class.ptr");
+                if (tgt == VarType::CLASS || tgt == VarType::STRING) {
+                    string r = ctx.fresh("arg.ptr");
                     ctx.out << "  " << r << " = inttoptr i64 " << val << " to ptr\n";
                     result.push_back({"ptr", r});
                 } else {
@@ -1322,6 +1430,7 @@ void Function::llvm_pre_register(LLVMGenCtx& ctx) {
 
 void Function::llvm_emit(LLVMGenCtx& ctx) {
     emit_all_classes(ctx);
+    if (_body) _body->collect_strings(ctx);
 
     ctx.vars.clear();
     ctx.var_types.clear();
@@ -1472,6 +1581,12 @@ string Assign::llvm_rval(LLVMGenCtx& ctx) {
         ctx.out << "  call void @_dorothy_release(ptr " << old_val << ")\n";
         return val;
     }
+    if (tgt_declared == VarType::STRING) {
+        string ptr_val = ctx.fresh("assign.str");
+        ctx.out << "  " << ptr_val << " = inttoptr i64 " << val << " to ptr\n";
+        ctx.out << "  store ptr " << ptr_val << ", ptr " << ptr << "\n";
+        return val;
+    }
     VarType src_canonical = _expr->llvm_etype(ctx);
     string tstr = llvm_type_str(tgt_declared);
     string store_val = llvm_coerce(ctx, val, src_canonical, tgt_declared);
@@ -1501,6 +1616,21 @@ static string emitBinOp(LLVMGenCtx& ctx, Expression* left, Expression* right,
 }
 
 string AddExp::llvm_rval(LLVMGenCtx& ctx) {
+    VarType lt = _left->llvm_etype(ctx);
+    VarType rt = _right->llvm_etype(ctx);
+    if (lt == VarType::STRING || rt == VarType::STRING) {
+        string l = _left->llvm_rval(ctx);
+        string r = _right->llvm_rval(ctx);
+        string l_ptr = ctx.fresh("str.l");
+        string r_ptr = ctx.fresh("str.r");
+        ctx.out << "  " << l_ptr << " = inttoptr i64 " << l << " to ptr\n";
+        ctx.out << "  " << r_ptr << " = inttoptr i64 " << r << " to ptr\n";
+        string res_ptr = ctx.fresh("str.concat");
+        ctx.out << "  " << res_ptr << " = call ptr @_dorothy_str_concat(ptr " << l_ptr << ", ptr " << r_ptr << ")\n";
+        string res_i64 = ctx.fresh("str.concat.i64");
+        ctx.out << "  " << res_i64 << " = ptrtoint ptr " << res_ptr << " to i64\n";
+        return res_i64;
+    }
     return emitBinOp(ctx, _left, _right, "add", "fadd");
 }
 
@@ -1531,7 +1661,15 @@ static string emitCmp(LLVMGenCtx& ctx, Expression* left, Expression* right,
     VarType et = promote_canonical(lt, rt);
     string cmp = ctx.fresh("cmp");
     string reg = ctx.fresh();
-    if (et == VarType::DOUBLE) {
+    if (et == VarType::STRING) {
+        string l_ptr = ctx.fresh("str.cmp.l");
+        string r_ptr = ctx.fresh("str.cmp.r");
+        ctx.out << "  " << l_ptr << " = inttoptr i64 " << l << " to ptr\n";
+        ctx.out << "  " << r_ptr << " = inttoptr i64 " << r << " to ptr\n";
+        string diff = ctx.fresh("str.diff");
+        ctx.out << "  " << diff << " = call i32 @_dorothy_str_cmp(ptr " << l_ptr << ", ptr " << r_ptr << ")\n";
+        ctx.out << "  " << cmp << " = icmp " << ipred << " i32 " << diff << ", 0\n";
+    } else if (et == VarType::DOUBLE) {
         if (lt != VarType::DOUBLE) l = llvm_promote_to_double(ctx, l, lt);
         if (rt != VarType::DOUBLE) r = llvm_promote_to_double(ctx, r, rt);
         ctx.out << "  " << cmp << " = fcmp " << fpred << " double " << l << ", " << r << "\n";
@@ -1608,8 +1746,8 @@ string MemberAccess::llvm_rval(LLVMGenCtx& ctx) {
         string fptr = ctx.fresh("field.ptr");
         ctx.out << "  " << fptr << " = getelementptr %class." << cname
                 << ", ptr " << obj_ptr << ", i32 0, i32 " << (fidx + 2) << "\n";
-        if (ftype == VarType::CLASS) {
-            string reg = ctx.fresh("field.obj");
+        if (ftype == VarType::CLASS || ftype == VarType::STRING) {
+            string reg = ctx.fresh("field.ptr");
             ctx.out << "  " << reg << " = load ptr, ptr " << fptr << "\n";
             string r_i64 = ctx.fresh("field.i64");
             ctx.out << "  " << r_i64 << " = ptrtoint ptr " << reg << " to i64\n";
@@ -1733,7 +1871,7 @@ string Variable::llvm_rval(LLVMGenCtx& ctx) {
         throw CompileError(("undefined variable: " + _id).c_str());
     }
     VarType declared = llvm_declared_type(ctx);
-    if (declared == VarType::CLASS) {
+    if (declared == VarType::CLASS || declared == VarType::STRING) {
         string reg = ctx.fresh(_id + ".ptr");
         ctx.out << "  " << reg << " = load ptr, ptr " << it->second << "\n";
         string int_reg = ctx.fresh(_id + ".i64");
@@ -1923,7 +2061,7 @@ string ClassInit::llvm_rval(LLVMGenCtx& ctx) {
                 << ", ptr " << raw_mem << ", i32 0, i32 " << (fi + 2) << "\n";
         if (is_float_type(cdef.fields[fi].type)) {
             ctx.out << "  store " << tstr << " 0.0, ptr " << fptr << "\n";
-        } else if (cdef.fields[fi].type == VarType::CLASS) {
+        } else if (cdef.fields[fi].type == VarType::CLASS || cdef.fields[fi].type == VarType::STRING) {
             ctx.out << "  store ptr null, ptr " << fptr << "\n";
         } else {
             ctx.out << "  store " << tstr << " 0, ptr " << fptr << "\n";
@@ -1939,8 +2077,8 @@ string ClassInit::llvm_rval(LLVMGenCtx& ctx) {
             VarType ac = _args[i]->llvm_etype(ctx);
             if (i < (int)cdef.constructor->params.size()) {
                 VarType pt = cdef.constructor->params[i].second;
-                if (pt == VarType::CLASS) {
-                    string r = ctx.fresh("ctor.class.ptr");
+                if (pt == VarType::CLASS || pt == VarType::STRING) {
+                    string r = ctx.fresh("ctor.ptr");
                     ctx.out << "  " << r << " = inttoptr i64 " << aval << " to ptr\n";
                     ctor_args.push_back({"ptr", r});
                 } else {
@@ -2025,8 +2163,8 @@ string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
         VarType ac = _args[i]->llvm_etype(ctx);
         if (i < (int)minfo->params.size()) {
             VarType pt = minfo->params[i]->getType();
-            if (pt == VarType::CLASS) {
-                string r = ctx.fresh("arg.class.ptr");
+            if (pt == VarType::CLASS || pt == VarType::STRING) {
+                string r = ctx.fresh("arg.ptr");
                 ctx.out << "  " << r << " = inttoptr i64 " << aval << " to ptr\n";
                 call_args.push_back({"ptr", r});
             } else {
@@ -2069,4 +2207,175 @@ void ClassDef::llvm_emit(LLVMGenCtx& ctx) {
 string NullExp::llvm_rval(LLVMGenCtx&) {
     return "0";
 }
+
+// ===== StringExp =====
+
+void StringExp::collect_strings(LLVMGenCtx& ctx) {
+    emit_string_runtime(ctx);
+    if (!ctx.str_literal_map.count(_str_val)) {
+        string name = "@.str." + to_string(ctx.str_lit_counter++);
+        ctx.str_literal_map[_str_val] = name;
+        int len = (int)_str_val.length() + 1;
+        string esc = llvm_escape_string(_str_val);
+        ctx.out << name << " = private unnamed_addr constant [" << len << " x i8] c\"" << esc << "\\00\", align 1\n\n";
+    }
+}
+
+string StringExp::llvm_rval(LLVMGenCtx& ctx) {
+    collect_strings(ctx);
+    string global_name = ctx.str_literal_map[_str_val];
+    int len = (int)_str_val.length() + 1;
+    string reg = ctx.fresh("str.ptr");
+    ctx.out << "  " << reg << " = getelementptr [" << len << " x i8], ptr " << global_name << ", i64 0, i64 0\n";
+    string r_i64 = ctx.fresh("str.i64");
+    ctx.out << "  " << r_i64 << " = ptrtoint ptr " << reg << " to i64\n";
+    return r_i64;
+}
+
+// ===== collect_strings implementations =====
+
+void InitializedDeclVar::collect_strings(LLVMGenCtx& ctx) {
+    if (_init) _init->collect_strings(ctx);
+}
+
+void InitializedDeclArrayVar::collect_strings(LLVMGenCtx& ctx) {
+    for (auto* v : _values) if (v) v->collect_strings(ctx);
+}
+
+void DeclVarSt::collect_strings(LLVMGenCtx& ctx) {
+    if (_decl) _decl->collect_strings(ctx);
+}
+
+void IfSt::collect_strings(LLVMGenCtx& ctx) {
+    if (_cond) _cond->collect_strings(ctx);
+    if (_truest) _truest->collect_strings(ctx);
+    if (_falsest) _falsest->collect_strings(ctx);
+}
+
+void WhileSt::collect_strings(LLVMGenCtx& ctx) {
+    if (_cond) _cond->collect_strings(ctx);
+    if (_body) _body->collect_strings(ctx);
+}
+
+void ForSt::collect_strings(LLVMGenCtx& ctx) {
+    if (_init) _init->collect_strings(ctx);
+    if (_cond) _cond->collect_strings(ctx);
+    if (_proceed) _proceed->collect_strings(ctx);
+    if (_body) _body->collect_strings(ctx);
+}
+
+void CallFuncSt::collect_strings(LLVMGenCtx& ctx) {
+    for (auto* a : _args) if (a) a->collect_strings(ctx);
+}
+
+void ReturnSt::collect_strings(LLVMGenCtx& ctx) {
+    if (_exp) _exp->collect_strings(ctx);
+}
+
+void Block::collect_strings(LLVMGenCtx& ctx) {
+    for (auto* s : _statements) if (s) s->collect_strings(ctx);
+}
+
+void ExpressionSt::collect_strings(LLVMGenCtx& ctx) {
+    if (_exp) _exp->collect_strings(ctx);
+}
+
+void Assign::collect_strings(LLVMGenCtx& ctx) {
+    if (_leftside) _leftside->collect_strings(ctx);
+    if (_expr) _expr->collect_strings(ctx);
+}
+
+void AddExp::collect_strings(LLVMGenCtx& ctx) {
+    if (_left) _left->collect_strings(ctx);
+    if (_right) _right->collect_strings(ctx);
+}
+
+void SubExp::collect_strings(LLVMGenCtx& ctx) {
+    if (_left) _left->collect_strings(ctx);
+    if (_right) _right->collect_strings(ctx);
+}
+
+void MulExp::collect_strings(LLVMGenCtx& ctx) {
+    if (_left) _left->collect_strings(ctx);
+    if (_right) _right->collect_strings(ctx);
+}
+
+void DivExp::collect_strings(LLVMGenCtx& ctx) {
+    if (_left) _left->collect_strings(ctx);
+    if (_right) _right->collect_strings(ctx);
+}
+
+void ModExp::collect_strings(LLVMGenCtx& ctx) {
+    if (_left) _left->collect_strings(ctx);
+    if (_right) _right->collect_strings(ctx);
+}
+
+void EQExp::collect_strings(LLVMGenCtx& ctx) {
+    if (_left) _left->collect_strings(ctx);
+    if (_right) _right->collect_strings(ctx);
+}
+
+void NEExp::collect_strings(LLVMGenCtx& ctx) {
+    if (_left) _left->collect_strings(ctx);
+    if (_right) _right->collect_strings(ctx);
+}
+
+void LTExp::collect_strings(LLVMGenCtx& ctx) {
+    if (_left) _left->collect_strings(ctx);
+    if (_right) _right->collect_strings(ctx);
+}
+
+void LEExp::collect_strings(LLVMGenCtx& ctx) {
+    if (_left) _left->collect_strings(ctx);
+    if (_right) _right->collect_strings(ctx);
+}
+
+void GTExp::collect_strings(LLVMGenCtx& ctx) {
+    if (_left) _left->collect_strings(ctx);
+    if (_right) _right->collect_strings(ctx);
+}
+
+void GEExp::collect_strings(LLVMGenCtx& ctx) {
+    if (_left) _left->collect_strings(ctx);
+    if (_right) _right->collect_strings(ctx);
+}
+
+void ArrayIndex::collect_strings(LLVMGenCtx& ctx) {
+    if (_pointer) _pointer->collect_strings(ctx);
+    if (_index) _index->collect_strings(ctx);
+}
+
+void Address::collect_strings(LLVMGenCtx& ctx) {
+    if (_exp) _exp->collect_strings(ctx);
+}
+
+void Access::collect_strings(LLVMGenCtx& ctx) {
+    if (_rightside) _rightside->collect_strings(ctx);
+}
+
+void CallFuncExp::collect_strings(LLVMGenCtx& ctx) {
+    for (auto* a : _args) if (a) a->collect_strings(ctx);
+}
+
+void StructInit::collect_strings(LLVMGenCtx& ctx) {
+    for (auto* a : _args) if (a) a->collect_strings(ctx);
+}
+
+void MemberAccess::collect_strings(LLVMGenCtx& ctx) {
+    if (_object) _object->collect_strings(ctx);
+}
+
+void ClassInit::collect_strings(LLVMGenCtx& ctx) {
+    for (auto* a : _args) if (a) a->collect_strings(ctx);
+}
+
+void CallMethodExp::collect_strings(LLVMGenCtx& ctx) {
+    if (_object) _object->collect_strings(ctx);
+    for (auto* a : _args) if (a) a->collect_strings(ctx);
+}
+
+void CallMethodSt::collect_strings(LLVMGenCtx& ctx) {
+    if (_call) _call->collect_strings(ctx);
+}
+
 

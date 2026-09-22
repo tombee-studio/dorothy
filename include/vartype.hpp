@@ -8,6 +8,7 @@ enum class VarType {
     LONG,     // i64 - 8 byte integer
     FLOAT,    // float  - 4 byte floating point
     DOUBLE,   // double - 8 byte floating point
+    STRING,   // variable-length string (ptr)
     STRUCT,   // user-defined struct type
     CLASS,    // user-defined class type (reference semantics, pointer)
     INFERRED, // placeholder for type inference; resolved in llvm_emit
@@ -20,6 +21,7 @@ inline std::string llvm_type_str(VarType t) {
         case VarType::LONG:     return "i64";
         case VarType::FLOAT:    return "float";
         case VarType::DOUBLE:   return "double";
+        case VarType::STRING:   return "ptr";
         case VarType::STRUCT:   return "ptr";
         case VarType::CLASS:    return "ptr";
         case VarType::INFERRED: return "i64";
@@ -31,13 +33,19 @@ inline bool is_float_type(VarType t) {
     return t == VarType::FLOAT || t == VarType::DOUBLE;
 }
 
-// Returns the canonical computation type (i64 for integers, double for floats)
+inline bool is_string_type(VarType t) {
+    return t == VarType::STRING;
+}
+
+// Returns the canonical computation type (STRING for string, double for floats, i64 for integers)
 inline VarType canonical_type(VarType t) {
+    if (is_string_type(t)) return VarType::STRING;
     return is_float_type(t) ? VarType::DOUBLE : VarType::LONG;
 }
 
-// Promote two canonical types (LONG vs DOUBLE)
+// Promote two canonical types (STRING vs DOUBLE vs LONG)
 inline VarType promote_canonical(VarType a, VarType b) {
+    if (a == VarType::STRING || b == VarType::STRING) return VarType::STRING;
     if (a == VarType::DOUBLE || b == VarType::DOUBLE) return VarType::DOUBLE;
     return VarType::LONG;
 }

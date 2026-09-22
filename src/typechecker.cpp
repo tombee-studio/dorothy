@@ -8,7 +8,9 @@ static string vartype_name(VarType t) {
         case VarType::LONG:   return "long";
         case VarType::FLOAT:  return "float";
         case VarType::DOUBLE: return "double";
+        case VarType::STRING: return "string";
         case VarType::STRUCT: return "struct";
+        case VarType::CLASS:  return "class";
         default:              return "unknown";
     }
 }
@@ -26,6 +28,17 @@ void TypeChecker::check_stmt(const Statement *stmt,
     } else if (auto *ret = dynamic_cast<const ReturnSt *>(stmt)) {
         if (!ret->getExpr()) return;
         VarType expr_type = ret->getExpr()->static_type(var_types, _func_ret_types);
+        bool expr_is_str = is_string_type(expr_type);
+        bool ret_is_str = is_string_type(expected_ret);
+        if (expr_is_str && !ret_is_str) {
+            throw TypeCheckError("function '" + func_name +
+                                 "': cannot return string value from " +
+                                 vartype_name(expected_ret) + "-returning function");
+        }
+        if (!expr_is_str && ret_is_str) {
+            throw TypeCheckError("function '" + func_name +
+                                 "': cannot return non-string value from string-returning function");
+        }
         bool expr_is_float = is_float_type(expr_type);
         bool ret_is_float  = is_float_type(expected_ret);
         if (expr_is_float && !ret_is_float) {
@@ -50,7 +63,19 @@ void TypeChecker::check_stmt(const Statement *stmt,
     } else if (auto *decl_st = dynamic_cast<const DeclVarSt *>(stmt)) {
         DeclVar *decl = decl_st->getDecl();
         VarType t = decl->getType();
-        // INFERRED is resolved at codegen; record as LONG for type-checking purposes
+        auto *init_decl = dynamic_cast<const InitializedDeclVar *>(decl);
+        if (init_decl && init_decl->getInit()) {
+            VarType init_t = init_decl->getInit()->static_type(var_types, _func_ret_types);
+            if (t == VarType::STRING && !is_string_type(init_t)) {
+                throw TypeCheckError("cannot initialize string variable '" + decl->getId() + "' with non-string value");
+            }
+            if (t != VarType::STRING && t != VarType::INFERRED && is_string_type(init_t)) {
+                throw TypeCheckError("cannot initialize " + vartype_name(t) + " variable '" + decl->getId() + "' with string value");
+            }
+            if (t == VarType::INFERRED) {
+                t = init_t;
+            }
+        }
         if (t == VarType::INFERRED) t = VarType::LONG;
         var_types[decl->getId()] = t;
     }

@@ -27,6 +27,7 @@ static const char* vartype_name(VarType t) {
         case VarType::LONG:     return "long";
         case VarType::FLOAT:    return "float";
         case VarType::DOUBLE:   return "double";
+        case VarType::STRING:   return "string";
         case VarType::STRUCT:   return "struct";
         case VarType::CLASS:    return "class";
         case VarType::INFERRED: return "auto";
@@ -927,6 +928,18 @@ void FloatExp::compile(vector<Code>& ofs, map<string, int>& vars,
 void FloatExp::lcompile(vector<Code>& codes, map<string, int>& vars,
                         map<string, int>& functions, int offset) {
     compile(codes, vars, functions, offset);
+}
+
+void StringExp::print(ostream& os, int tab) { os << "\"" << _str_val << "\""; }
+
+void StringExp::compile(vector<Code>& ofs, map<string, int>& vars,
+                        map<string, int>& functions, int offset) {
+    ofs.push_back(Code::makeCode("PUSHI 0 0"));
+}
+
+void StringExp::lcompile(vector<Code>& codes, map<string, int>& vars,
+                         map<string, int>& functions, int offset) {
+    codes.push_back(Code::makeCode(Code::PUSHI, 0, 0));
 }
 
 void ArrayIndex::print(ostream& os, int tab) {

@@ -56,6 +56,10 @@ struct LLVMGenCtx {
     std::string this_class;
     std::string this_ptr_reg;
     bool classes_emitted = false;
+    // String primitive support
+    std::map<std::string, std::string> str_literal_map;
+    int str_lit_counter = 0;
+    bool str_runtime_emitted = false;
 
     // Scope management for class reference counting (ARC)
     struct Scope {

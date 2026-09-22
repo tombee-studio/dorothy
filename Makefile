@@ -30,6 +30,7 @@ test:
 			tests/gtest_glinda.cpp \
 			tests/gtest_typechecker.cpp \
 			tests/gtest_null_safety.cpp \
+			tests/gtest_string.cpp \
 			obj/*.o $(GTEST_LIBS) -o dist/test_runner
 		./dist/test_runner
 

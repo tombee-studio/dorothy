@@ -8,7 +8,7 @@ namespace fs = std::filesystem;
 
 static bool is_type_keyword(Token::Type t) {
     return t == Token::KW_INT || t == Token::KW_CHAR || t == Token::KW_LONG ||
-           t == Token::KW_FLOAT || t == Token::KW_DOUBLE;
+           t == Token::KW_FLOAT || t == Token::KW_DOUBLE || t == Token::KW_STRING;
 }
 
 static VarType token_to_vartype(Token::Type t) {
@@ -18,6 +18,7 @@ static VarType token_to_vartype(Token::Type t) {
         case Token::KW_LONG:   return VarType::LONG;
         case Token::KW_FLOAT:  return VarType::FLOAT;
         case Token::KW_DOUBLE: return VarType::DOUBLE;
+        case Token::KW_STRING: return VarType::STRING;
         default:               return VarType::LONG;
     }
 }
@@ -722,18 +723,14 @@ Statement *Parser::parse_declvarst(vector<Token> &tokens) {
     if (tokens[_pos].type == (Token::Type)'=') {
         _pos++;  // consume '='
 
-        // String literal → char[N] array (size = len + 1 for null terminator)
+        // String literal → String type (VarType::STRING)
         if (tokens[_pos].type == Token::TK_RAWSTRING) {
             string s = tokens[_pos].id;
             _pos++;
             if (consume(tokens, (Token::Type)';').type == Token::NONE)
                 throw ParseError("expected ';'", tokens[_pos]);
-            int sz = (int)s.size() + 1;
-            vector<Expression *> vals;
-            for (unsigned char c : s) vals.push_back(new IntExp(c));
-            vals.push_back(new IntExp(0));
             return new DeclVarSt(
-                new InitializedDeclArrayVar(id_token.id, sz, vals, VarType::CHAR, is_const));
+                new InitializedDeclVar(id_token.id, VarType::STRING, is_const, new StringExp(s)));
         }
 
         Expression *init = parse_expression(tokens);
@@ -1079,6 +1076,11 @@ Expression *Parser::parse_term(vector<Token> &tokens) {
     if (tokens[_pos].type == Token::KW_NULL) {
         _pos++;
         return new NullExp();
+    }
+    if (tokens[_pos].type == Token::TK_RAWSTRING) {
+        string s = tokens[_pos].id;
+        _pos++;
+        return new StringExp(s);
     }
     if ((exp = parse_class_init(tokens))) return exp;
     if ((exp = parse_struct_init(tokens))) return exp;
