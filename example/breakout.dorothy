@@ -61,7 +61,7 @@ class RectRendererComponent: Component {
 
     override func render(ren: long) {
         let tName: string = "Transform";
-        let t: TransformComponent? = this.entity.getComponent(tName);
+        var t: TransformComponent? = this.entity.getComponent(tName);
         if (t != null) {
             glinda_draw_rect(ren, t.x, t.y, t.width, t.height, this.r, this.g, this.b, 255);
         }
@@ -93,7 +93,7 @@ class PaddleControllerComponent: Component {
         let state: long = SDL_GetKeyboardState(numkeys);
         if (state != 0) {
             let tName: string = "Transform";
-            let t: TransformComponent? = this.entity.getComponent(tName);
+            var t: TransformComponent? = this.entity.getComponent(tName);
             if (t != null) {
                 // Left: 80, A: 4
                 var left_pressed: int = 0;
@@ -308,7 +308,7 @@ class BallPhysicsComponent: Component {
     override func update() {
         if (this.gameManager.gameState == 0) {
             let tName: string = "Transform";
-            let t: TransformComponent? = this.entity.getComponent(tName);
+            var t: TransformComponent? = this.entity.getComponent(tName);
             if (t != null) {
                 // Left wall
                 if (t.x <= 10) {
