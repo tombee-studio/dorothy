@@ -60,6 +60,10 @@ struct LLVMGenCtx {
     std::map<std::string, std::string> str_literal_map;
     int str_lit_counter = 0;
     bool str_runtime_emitted = false;
+    // Dynamic Array support
+    std::map<std::string, TypeInfo> array_var_typeinfo;
+    bool array_runtime_emitted = false;
+    bool null_check_emitted = false;
 
     // Scope management for class reference counting (ARC)
     struct Scope {

@@ -139,14 +139,16 @@ protected:
   string _id;
   VarType _type;
   bool _is_const;
-  string _struct_name; // non-empty when _type == VarType::STRUCT or CLASS
+  string _struct_name; // non-empty when _type == VarType::STRUCT or CLASS or ARRAY
   bool _is_nullable;
+  TypeInfo _type_info;
 
 public:
   DeclVar(string id, VarType type = VarType::LONG, bool is_const = false,
-          string struct_name = "", bool is_nullable = false)
+          string struct_name = "", bool is_nullable = false,
+          TypeInfo type_info = {})
       : _id(id), _type(type), _is_const(is_const), _struct_name(struct_name),
-        _is_nullable(is_nullable) {}
+        _is_nullable(is_nullable), _type_info(type_info) {}
 
   VarType getType() const { return _type; }
   const string &getId() const { return _id; }
@@ -154,6 +156,8 @@ public:
   bool isNullable() const { return _is_nullable; }
   const string &getStructName() const { return _struct_name; }
   const string &getClassName() const { return _struct_name; }
+  const TypeInfo &getTypeInfo() const { return _type_info; }
+  void setTypeInfo(const TypeInfo &ti) { _type_info = ti; }
 
   virtual void print(ostream &, int tab);
   virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
@@ -167,8 +171,9 @@ class InitializedDeclVar : public DeclVar {
 
 public:
   InitializedDeclVar(string id, VarType type, bool is_const, Expression *init,
-                     string struct_name = "", bool is_nullable = false)
-      : DeclVar(id, type, is_const, struct_name, is_nullable), _init(init) {}
+                     string struct_name = "", bool is_nullable = false,
+                     TypeInfo type_info = {})
+      : DeclVar(id, type, is_const, struct_name, is_nullable, type_info), _init(init) {}
 
   Expression *getInit() const { return _init; }
   virtual void print(ostream &, int tab);
@@ -776,6 +781,29 @@ public:
   void collect_strings(LLVMGenCtx &ctx) override;
 };
 
+class ArrayLiteralExp : public Expression {
+  vector<Expression *> _elements;
+
+public:
+  explicit ArrayLiteralExp(vector<Expression *> elements)
+      : _elements(std::move(elements)) {}
+
+  const vector<Expression *> &getElements() const { return _elements; }
+
+  void print(ostream &, int tab) override;
+  void compile(vector<Code> &, map<string, int> &, map<string, int> &, int) override;
+  void lcompile(vector<Code> &, map<string, int> &, map<string, int> &, int) override;
+  string llvm_rval(LLVMGenCtx &) override;
+  VarType llvm_etype(LLVMGenCtx &) const override { return VarType::LONG; }
+  VarType llvm_declared_type(LLVMGenCtx &) const override { return VarType::ARRAY; }
+  VarType compile_type(map<string, int> &) const override { return VarType::ARRAY; }
+  VarType static_type(const map<string, VarType> &,
+                      const map<string, VarType> &) const override {
+    return VarType::ARRAY;
+  }
+  void collect_strings(LLVMGenCtx &ctx) override;
+};
+
 class ArrayIndex : public Expression {
   Expression *_pointer;
   Expression *_index;
@@ -794,6 +822,8 @@ public:
   VarType llvm_declared_type(LLVMGenCtx &ctx) const override;
   VarType llvm_etype(LLVMGenCtx &ctx) const override;
   void collect_strings(LLVMGenCtx &ctx) override;
+  Expression *getPointer() const { return _pointer; }
+  Expression *getIndex() const { return _index; }
   const string &getVarName() const override {
     return _pointer ? _pointer->getVarName() : Expression::getVarName();
   }

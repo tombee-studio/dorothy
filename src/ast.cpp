@@ -30,6 +30,7 @@ static const char* vartype_name(VarType t) {
         case VarType::STRING:   return "string";
         case VarType::STRUCT:   return "struct";
         case VarType::CLASS:    return "class";
+        case VarType::ARRAY:    return "array";
         case VarType::INFERRED: return "auto";
     }
     return "int";
@@ -1252,4 +1253,28 @@ void ClassDef::print(ostream& os, int tab) {
 void ClassDef::compile(vector<Code>&, map<string, int>&, map<string, int>&, int) {
     // No-op for bytecode compiler
 }
+
+void ArrayLiteralExp::print(ostream& os, int tab) {
+    os << "[";
+    for (size_t i = 0; i < _elements.size(); i++) {
+        if (i > 0) os << ", ";
+        _elements[i]->print(os, tab);
+    }
+    os << "]";
+}
+
+void ArrayLiteralExp::compile(vector<Code>&, map<string, int>&, map<string, int>&, int) {
+    throw CompileError("dynamic arrays are only supported in LLVM target");
+}
+
+void ArrayLiteralExp::lcompile(vector<Code>&, map<string, int>&, map<string, int>&, int) {
+    throw CompileError("cannot use array literal as lvalue");
+}
+
+void ArrayLiteralExp::collect_strings(LLVMGenCtx& ctx) {
+    for (auto* e : _elements) {
+        if (e) e->collect_strings(ctx);
+    }
+}
+
 

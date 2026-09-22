@@ -1,6 +1,7 @@
 /* Copyright 2022(Tomoya Bansho@tomoya-kwansei) */
 #pragma once
 #include <string>
+#include <vector>
 
 enum class VarType {
     CHAR,     // i8  - 1 byte integer
@@ -11,7 +12,24 @@ enum class VarType {
     STRING,   // variable-length string (ptr)
     STRUCT,   // user-defined struct type
     CLASS,    // user-defined class type (reference semantics, pointer)
+    ARRAY,    // dynamic array (Array<T> / T[], pointer)
     INFERRED, // placeholder for type inference; resolved in llvm_emit
+};
+
+struct TypeInfo {
+    VarType base_type = VarType::LONG;
+    std::string type_name;          // e.g. "Player", "Box", "Array"
+    bool is_nullable = false;
+    std::vector<TypeInfo> generic_args; // e.g. for Array<T>, [TypeInfo for T]
+
+    bool is_array() const {
+        return base_type == VarType::ARRAY || type_name == "Array";
+    }
+
+    TypeInfo get_element_type() const {
+        if (!generic_args.empty()) return generic_args[0];
+        return TypeInfo{VarType::LONG, "", false, {}};
+    }
 };
 
 inline std::string llvm_type_str(VarType t) {
@@ -24,6 +42,7 @@ inline std::string llvm_type_str(VarType t) {
         case VarType::STRING:   return "ptr";
         case VarType::STRUCT:   return "ptr";
         case VarType::CLASS:    return "ptr";
+        case VarType::ARRAY:    return "ptr";
         case VarType::INFERRED: return "i64";
     }
     return "i64";

@@ -11,6 +11,7 @@ static string vartype_name(VarType t) {
         case VarType::STRING: return "string";
         case VarType::STRUCT: return "struct";
         case VarType::CLASS:  return "class";
+        case VarType::ARRAY:  return "array";
         default:              return "unknown";
     }
 }
