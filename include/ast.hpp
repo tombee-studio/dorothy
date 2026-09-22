@@ -238,6 +238,7 @@ public:
   bool hasExplicitRetType() const { return _has_explicit_ret_type; }
   bool isRetNullable() const { return _is_ret_nullable; }
   Statement *getBody() const { return _body; }
+  const vector<DeclVar *> &getArgs() const { return _args; }
   virtual bool isImport() const { return false; }
 };
 
@@ -298,6 +299,7 @@ class IfSt : public Statement {
 public:
   IfSt(Expression *cond, Statement *truest, Statement *falsest)
       : _cond(cond), _truest(truest), _falsest(falsest) {}
+  Expression *getCond() const { return _cond; }
   Statement *getTrueSt() const { return _truest; }
   Statement *getFalseSt() const { return _falsest; }
   virtual void print(ostream &, int tab);
@@ -313,6 +315,7 @@ class WhileSt : public Statement {
 
 public:
   WhileSt(Expression *cond, Statement *body) : _cond(cond), _body(body) {}
+  Expression *getCond() const { return _cond; }
   Statement *getBody() const { return _body; }
   virtual void print(ostream &, int tab);
   virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
@@ -331,6 +334,9 @@ public:
   ForSt(Expression *init, Expression *cond, Expression *proceed,
         Statement *body)
       : _init(init), _cond(cond), _proceed(proceed), _body(body) {}
+  Expression *getInit() const { return _init; }
+  Expression *getCond() const { return _cond; }
+  Expression *getProceed() const { return _proceed; }
   Statement *getBody() const { return _body; }
   virtual void print(ostream &, int tab);
   virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
@@ -345,6 +351,8 @@ class CallFuncSt : public Statement {
 
 public:
   CallFuncSt(string id, vector<Expression *> args) : _id(id), _args(args) {}
+  const string &getId() const { return _id; }
+  const vector<Expression *> &getArgs() const { return _args; }
   virtual void print(ostream &, int tab);
   virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
                        int);
@@ -425,6 +433,7 @@ public:
                        int);
   virtual void llvm_emit(LLVMGenCtx &);
   void collect_strings(LLVMGenCtx &ctx) override;
+  Expression *getExpr() const { return _exp; }
 };
 
 class Assign : public Expression {
@@ -448,6 +457,8 @@ public:
     return _leftside->compile_type(vars);
   }
   void collect_strings(LLVMGenCtx &ctx) override;
+  Expression *getLeftSide() const { return _leftside; }
+  Expression *getExpr() const { return _expr; }
 };
 
 class AddExp : public Expression {
@@ -783,6 +794,9 @@ public:
   VarType llvm_declared_type(LLVMGenCtx &ctx) const override;
   VarType llvm_etype(LLVMGenCtx &ctx) const override;
   void collect_strings(LLVMGenCtx &ctx) override;
+  const string &getVarName() const override {
+    return _pointer ? _pointer->getVarName() : Expression::getVarName();
+  }
 };
 
 class Address : public Expression {

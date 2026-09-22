@@ -591,8 +591,10 @@ vector<DeclVar *> Parser::parse_declargs(vector<Token> &tokens) {
     vector<DeclVar *> declargs;
     if (consume(tokens, (Token::Type)'(').type == Token::NONE)
         throw ParseError(format("position: %d", _pos), tokens[_pos]);
-    // Parameters use "name: type" syntax
-    if (tokens[_pos].type == Token::TK_ID) {
+    // Parameters use "name: type" syntax, optionally prefixed with let or var
+    if (tokens[_pos].type == Token::TK_ID ||
+        tokens[_pos].type == Token::KW_LET ||
+        tokens[_pos].type == Token::KW_VAR) {
         declargs.push_back(parse_declparam(tokens));
         while (consume(tokens, (Token::Type)',').type == (Token::Type)',') {
             declargs.push_back(parse_declparam(tokens));
@@ -604,6 +606,13 @@ vector<DeclVar *> Parser::parse_declargs(vector<Token> &tokens) {
 }
 
 DeclVar *Parser::parse_declparam(vector<Token> &tokens) {
+    bool is_const = false;
+    if (tokens[_pos].type == Token::KW_LET) {
+        is_const = true;
+        _pos++;
+    } else if (tokens[_pos].type == Token::KW_VAR) {
+        _pos++;
+    }
     Token id_token = consume(tokens, Token::TK_ID);
     if (id_token.type == Token::NONE)
         throw ParseError(format("expected parameter name at %d", _pos), tokens[_pos]);
@@ -617,18 +626,18 @@ DeclVar *Parser::parse_declparam(vector<Token> &tokens) {
             is_nullable = true;
             _pos++;
         }
-        return new DeclVar(id_token.id, VarType::CLASS, false, class_name, is_nullable);
+        return new DeclVar(id_token.id, VarType::CLASS, is_const, class_name, is_nullable);
     }
     if (tokens[_pos].type == Token::TK_ID && _struct_defs.count(tokens[_pos].id)) {
         string struct_name = tokens[_pos].id;
         _pos++;
-        return new DeclVar(id_token.id, VarType::STRUCT, false, struct_name);
+        return new DeclVar(id_token.id, VarType::STRUCT, is_const, struct_name);
     }
     if (!is_type_keyword(tokens[_pos].type))
         throw ParseError("expected type keyword after ':'", tokens[_pos]);
     VarType vtype = token_to_vartype(tokens[_pos].type);
     _pos++;
-    return new DeclVar(id_token.id, vtype);
+    return new DeclVar(id_token.id, vtype, is_const);
 }
 
 DeclVar *Parser::parse_declvar(vector<Token> &tokens) {
