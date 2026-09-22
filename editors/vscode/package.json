@@ -1,0 +1,47 @@
+{
+  "name": "dorothy-vscode",
+  "displayName": "Dorothy Language Support",
+  "description": "Rich syntax highlighting, bracket matching, and language configuration for the Dorothy programming language.",
+  "version": "0.1.0",
+  "publisher": "tombee-studio",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "dorothy",
+    "compiler",
+    "glinda",
+    "language"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "dorothy",
+        "aliases": [
+          "Dorothy",
+          "dorothy"
+        ],
+        "extensions": [
+          ".dorothy"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "dorothy",
+        "scopeName": "source.dorothy",
+        "path": "./syntaxes/dorothy.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "dorothy",
+        "path": "./snippets/dorothy.json"
+      }
+    ]
+  }
+}

@@ -1,0 +1,409 @@
+{
+  "Import Statement": {
+    "prefix": "import",
+    "body": [
+      "import \"${1:file}\";"
+    ],
+    "description": "Import a C header or Dorothy file"
+  },
+  "Import stdio.h": {
+    "prefix": "import-stdio",
+    "body": [
+      "import \"stdio.h\";"
+    ],
+    "description": "Import standard I/O library (stdio.h)"
+  },
+  "Import string.h": {
+    "prefix": "import-string",
+    "body": [
+      "import \"string.h\";"
+    ],
+    "description": "Import standard string library (string.h)"
+  },
+  "Import SDL2": {
+    "prefix": "import-sdl2",
+    "body": [
+      "import \"SDL2/SDL.h\";"
+    ],
+    "description": "Import SDL2 graphics & input library (SDL2/SDL.h)"
+  },
+  "Import Glinda Framework": {
+    "prefix": "import-glinda",
+    "body": [
+      "import \"${1:../frameworks/glinda/}glinda.dorothy\";"
+    ],
+    "description": "Import the Glinda ECS Game Framework (glinda.dorothy)"
+  },
+  "Import Dorothy Module": {
+    "prefix": "import-dorothy",
+    "body": [
+      "import \"${1:module}.dorothy\";"
+    ],
+    "description": "Import a custom Dorothy module (.dorothy)"
+  },
+
+  "Main Function": {
+    "prefix": "main",
+    "body": [
+      "func main() -> int {",
+      "\t${0:// TODO: implementation}",
+      "\treturn 0;",
+      "}"
+    ],
+    "description": "Main function entrypoint"
+  },
+  "Function Definition": {
+    "prefix": "func",
+    "body": [
+      "func ${1:name}(${2:params}) {",
+      "\t${0}",
+      "}"
+    ],
+    "description": "Define a function without return type"
+  },
+  "Function with Return Type": {
+    "prefix": "func-return",
+    "body": [
+      "func ${1:name}(${2:params}) -> ${3:int} {",
+      "\t${0}",
+      "\treturn ${4:0};",
+      "}"
+    ],
+    "description": "Define a function with return type"
+  },
+  "Constant Declaration": {
+    "prefix": "let",
+    "body": [
+      "let ${1:name}: ${2:type} = ${3:value};"
+    ],
+    "description": "Declare an immutable constant"
+  },
+  "Variable Declaration": {
+    "prefix": "var",
+    "body": [
+      "var ${1:name}: ${2:type} = ${3:value};"
+    ],
+    "description": "Declare a mutable variable"
+  },
+  "Class Definition": {
+    "prefix": "class",
+    "body": [
+      "class ${1:ClassName} {",
+      "\tvar ${2:field}: ${3:int};",
+      "",
+      "\tfunc ${1:ClassName}(${2:field}: ${3:int}) {",
+      "\t\tthis.${2:field} = ${2:field};",
+      "\t}",
+      "",
+      "\t${0}",
+      "}"
+    ],
+    "description": "Define a class with fields and a constructor"
+  },
+  "Class Inheritance": {
+    "prefix": "class-extends",
+    "body": [
+      "class ${1:ClassName}: ${2:BaseClass} {",
+      "\tvar ${3:field}: ${4:int};",
+      "",
+      "\tfunc ${1:ClassName}(${3:field}: ${4:int}) {",
+      "\t\tthis.${3:field} = ${3:field};",
+      "\t}",
+      "",
+      "\t${0}",
+      "}"
+    ],
+    "description": "Define a class extending a base class"
+  },
+  "Abstract Class": {
+    "prefix": "abstract-class",
+    "body": [
+      "abstract class ${1:ClassName} {",
+      "\tabstract func ${2:methodName}(${3:params}) -> ${4:int};",
+      "\t${0}",
+      "}"
+    ],
+    "description": "Define an abstract class"
+  },
+  "Structure Definition": {
+    "prefix": "struct",
+    "body": [
+      "struct ${1:StructName} {",
+      "\tvar ${2:x}: ${3:int};",
+      "\tvar ${4:y}: ${5:int};",
+      "",
+      "\tconstructor(${2:x}: ${3:int}, ${4:y}: ${5:int}) {",
+      "\t\tthis.${2:x} = ${2:x};",
+      "\t\tthis.${4:y} = ${4:y};",
+      "\t}",
+      "}"
+    ],
+    "description": "Define a struct with constructor"
+  },
+  "Override Method": {
+    "prefix": "override",
+    "body": [
+      "override func ${1:methodName}(${2:params}) -> ${3:string} {",
+      "\t${0}",
+      "}"
+    ],
+    "description": "Override a method from base class"
+  },
+  "If Statement": {
+    "prefix": "if",
+    "body": [
+      "if (${1:condition}) {",
+      "\t${0}",
+      "}"
+    ],
+    "description": "If statement"
+  },
+  "If-Else Statement": {
+    "prefix": "ifelse",
+    "body": [
+      "if (${1:condition}) {",
+      "\t${2}",
+      "} else {",
+      "\t${0}",
+      "}"
+    ],
+    "description": "If-else statement"
+  },
+  "While Loop": {
+    "prefix": "while",
+    "body": [
+      "while (${1:condition}) {",
+      "\t${0}",
+      "}"
+    ],
+    "description": "While loop"
+  },
+  "For Loop": {
+    "prefix": "for",
+    "body": [
+      "for (${1:i} = ${2:0}; ${1:i} < ${3:10}; ${1:i} = ${1:i} + 1) {",
+      "\t${0}",
+      "}"
+    ],
+    "description": "For loop"
+  },
+
+  "Glinda Component": {
+    "prefix": "glinda-component",
+    "body": [
+      "class ${1:Custom}Component: Component {",
+      "\tvar ${2:value}: ${3:int};",
+      "",
+      "\tfunc ${1:Custom}Component(${2:value}: ${3:int}) {",
+      "\t\tthis.${2:value} = ${2:value};",
+      "\t}",
+      "",
+      "\toverride func getName() -> string {",
+      "\t\treturn \"${1:Custom}\";",
+      "\t}",
+      "",
+      "\toverride func init() {",
+      "\t\t${4}",
+      "\t}",
+      "",
+      "\toverride func update() {",
+      "\t\t${5}",
+      "\t}",
+      "",
+      "\toverride func render(ren: long) {",
+      "\t\t${0}",
+      "\t}",
+      "}"
+    ],
+    "description": "Define a custom ECS Component for Glinda Framework"
+  },
+  "Glinda App Boilerplate": {
+    "prefix": "glinda-app",
+    "body": [
+      "import \"stdio.h\";",
+      "import \"string.h\";",
+      "import \"SDL2/SDL.h\";",
+      "import \"${1:../frameworks/glinda/}glinda.dorothy\";",
+      "",
+      "func main() -> int {",
+      "\tlet screenW: int = ${2:640};",
+      "\tlet screenH: int = ${3:480};",
+      "\tvar app: GlindaApp = GlindaApp(screenW, screenH);",
+      "\tif (app.initSDL(\"${4:Glinda App}\") != 0) {",
+      "\t\treturn 1;",
+      "\t}",
+      "",
+      "\tvar scene: Scene = Scene();",
+      "\t// TODO: add entities to scene",
+      "\t${0}",
+      "",
+      "\tapp.setScene(scene);",
+      "\tapp.run();",
+      "\treturn 0;",
+      "}"
+    ],
+    "description": "Glinda ECS App boilerplate setup and main loop"
+  },
+  "Glinda Entity Creation": {
+    "prefix": "glinda-entity",
+    "body": [
+      "var ${1:entity}: Entity = Entity();",
+      "${1:entity}.addComponent(${2:component});",
+      "${3:scene}.addEntity(${1:entity});"
+    ],
+    "description": "Create a Glinda Entity, add a component, and attach to scene"
+  },
+  "Glinda Get Component": {
+    "prefix": "glinda-get-component",
+    "body": [
+      "let ${1:cName}: string = \"${2:Transform}\";",
+      "var ${3:comp}: ${2:Transform}Component? = this.entity.getComponent(${1:cName});",
+      "if (${3:comp} != null) {",
+      "\t${0}",
+      "}"
+    ],
+    "description": "Safely query and cast a Component on current entity in Glinda"
+  },
+  "Glinda Draw Rect Helper": {
+    "prefix": "glinda-draw-rect",
+    "body": [
+      "glinda_draw_rect(${1:ren}, ${2:x}, ${3:y}, ${4:width}, ${5:height}, ${6:255}, ${7:255}, ${8:255}, 255);"
+    ],
+    "description": "Draw a filled rectangle with RGBA color in Glinda"
+  },
+
+  "SDL Poll Event Loop": {
+    "prefix": "sdl-poll-event",
+    "body": [
+      "var ${1:event}: int[24];",
+      "while (SDL_PollEvent(${1:event}) != 0) {",
+      "\tlet eventType: int = ${1:event}[0];",
+      "\tif (eventType == 256) {",
+      "\t\t// SDL_QUIT",
+      "\t\t${2:running = 0;}",
+      "\t}",
+      "\tif (eventType == 768) {",
+      "\t\t// SDL_KEYDOWN",
+      "\t\tlet keycode: int = ${1:event}[5];",
+      "\t\tif (keycode == 27) {",
+      "\t\t\t// Escape key",
+      "\t\t\t${3:running = 0;}",
+      "\t\t}",
+      "\t}",
+      "}"
+    ],
+    "description": "SDL2 event polling loop"
+  },
+  "SDL Get Keyboard State": {
+    "prefix": "sdl-keyboard-state",
+    "body": [
+      "var numkeys: int = 0;",
+      "let keyState: long = SDL_GetKeyboardState(numkeys);",
+      "if (keyState != 0) {",
+      "\t// Left arrow: 80, Right arrow: 79, Space: 44",
+      "\tif (keyState[${1:80}] != 0) {",
+      "\t\t${0}",
+      "\t}",
+      "}"
+    ],
+    "description": "SDL2 keyboard state polling"
+  },
+  "SDL Set Draw Color": {
+    "prefix": "sdl-set-color",
+    "body": [
+      "SDL_SetRenderDrawColor(${1:renderer}, ${2:r}, ${3:g}, ${4:b}, ${5:255});"
+    ],
+    "description": "SDL_SetRenderDrawColor helper"
+  },
+  "SDL Render Clear": {
+    "prefix": "sdl-clear",
+    "body": [
+      "SDL_SetRenderDrawColor(${1:renderer}, ${2:0}, ${3:0}, ${4:0}, 255);",
+      "SDL_RenderClear(${1:renderer});"
+    ],
+    "description": "SDL_RenderClear helper"
+  },
+  "SDL Render Present": {
+    "prefix": "sdl-present",
+    "body": [
+      "SDL_RenderPresent(${1:renderer});"
+    ],
+    "description": "SDL_RenderPresent helper"
+  },
+  "SDL Delay": {
+    "prefix": "sdl-delay",
+    "body": [
+      "SDL_Delay(${1:16});"
+    ],
+    "description": "SDL_Delay frame rate limiter (ms)"
+  },
+  "SDL Init": {
+    "prefix": "sdl-init",
+    "body": [
+      "let init_res: int = SDL_Init(32);",
+      "if (init_res < 0) {",
+      "\tprintf(\"Failed to init SDL: %s\\n\", SDL_GetError());",
+      "\treturn 1;",
+      "}"
+    ],
+    "description": "Initialize SDL2 video subsystem"
+  },
+  "SDL Create Window & Renderer": {
+    "prefix": "sdl-create-window-renderer",
+    "body": [
+      "var window: long = SDL_CreateWindow(\"${1:Window Title}\", 100, 100, ${2:640}, ${3:480}, 4);",
+      "var renderer: long = SDL_CreateRenderer(window, 0 - 1, 2);"
+    ],
+    "description": "Create SDL2 window and renderer"
+  },
+
+  "Printf (stdio.h)": {
+    "prefix": "printf",
+    "body": [
+      "printf(\"${1:%s\\n}\", ${2:args});"
+    ],
+    "description": "Print formatted string using C standard library"
+  },
+  "Puts (stdio.h)": {
+    "prefix": "puts",
+    "body": [
+      "puts(${1:string});"
+    ],
+    "description": "Print string with trailing newline using C standard library"
+  },
+  "Strlen (string.h)": {
+    "prefix": "strlen",
+    "body": [
+      "strlen(${1:str})"
+    ],
+    "description": "Get string length using string.h"
+  },
+  "Strcmp (string.h)": {
+    "prefix": "strcmp",
+    "body": [
+      "strcmp(${1:s1}, ${2:s2})"
+    ],
+    "description": "Compare strings using string.h"
+  },
+  "Malloc (stdlib.h)": {
+    "prefix": "malloc",
+    "body": [
+      "malloc(${1:size})"
+    ],
+    "description": "Allocate memory using stdlib.h"
+  },
+  "Free (stdlib.h)": {
+    "prefix": "free",
+    "body": [
+      "free(${1:ptr});"
+    ],
+    "description": "Free allocated memory using stdlib.h"
+  },
+  "Exit (stdlib.h)": {
+    "prefix": "exit",
+    "body": [
+      "exit(${1:0});"
+    ],
+    "description": "Terminate process with exit code"
+  }
+}

@@ -1,7 +1,7 @@
 GTEST_CFLAGS = $(shell pkg-config --cflags gtest)
 GTEST_LIBS   = $(shell pkg-config --libs gtest_main) -lpthread
 
-.PHONY: default setup lib cli test
+.PHONY: default setup lib cli test vscode
 
 default: lib
 	sh install.sh
@@ -11,6 +11,13 @@ cli:
 		make lib
 		g++ --std=c++17 -o dist/dorothy cli/main.cpp Lib/libdorothy.a
 		sudo cp dist/dorothy /usr/local/bin/
+
+vscode:
+		mkdir -p ~/.vscode/extensions
+		ln -sfn "$$(pwd)/editors/vscode" ~/.vscode/extensions/dorothy-vscode
+		@echo "Dorothy VS Code extension installed to ~/.vscode/extensions/dorothy-vscode"
+		@echo "Please reload or restart Visual Studio Code (Cmd+Shift+P -> Developer: Reload Window) to activate."
+
 
 test:
 		g++ -c --std=c++17 src/code.cpp -o obj/code.o

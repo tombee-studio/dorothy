@@ -297,6 +297,28 @@ Or run the ECS feature demo:
 dorothy --emit-llvm example/glinda_demo.dorothy | clang -x ir - -o glinda_demo $(pkg-config --cflags --libs sdl2)
 ./glinda_demo
 ```
+---
+
+## Editor Support (VS Code)
+
+Dorothy provides syntax highlighting and language support for Visual Studio Code.
+
+### Installation
+
+To install the extension locally:
+
+```sh
+make vscode
+```
+
+Or manually link the extension:
+
+```sh
+mkdir -p ~/.vscode/extensions
+ln -sfn "$(pwd)/editors/vscode" ~/.vscode/extensions/dorothy-vscode
+```
+
+After installation, reload VS Code (`Cmd+Shift+P` -> `Developer: Reload Window`).
 
 ---
 
@@ -305,6 +327,7 @@ dorothy --emit-llvm example/glinda_demo.dorothy | clang -x ir - -o glinda_demo $
 ```
 dorothy/
 ├── cli/        # CLI entry point (main.cpp)
+├── editors/    # Editor support extensions (VS Code syntax highlighting)
 ├── frameworks/ # High-level frameworks (e.g., Glinda ECS framework)
 ├── include/    # Headers (lexer, parser, AST, codegen, typechecker)
 ├── src/        # Implementation (lexer, parser, AST, VM, LLVM codegen, typechecker)
@@ -322,3 +345,4 @@ dorothy/
 ## License
 
 MIT License
+
