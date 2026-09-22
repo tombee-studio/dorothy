@@ -1,7 +1,7 @@
 import "stdio.h";
 
 func main() {
-    var msg = "Hello, Dorothy!";
+    let msg: string = "Hello, Dorothy!";
     puts(msg);
     return 0;
 }

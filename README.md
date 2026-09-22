@@ -1,6 +1,6 @@
 # Dorothy
 
-A simple programming language that compiles to a custom bytecode VM or LLVM IR.
+A modern programming language that compiles to a custom bytecode VM or LLVM IR, featuring strong typing, Null-safety, reference-counted object lifecycle (ARC), and the Glinda ECS Game Framework.
 
 ## Prerequisites
 
@@ -39,13 +39,7 @@ dorothy script.txt
 
 The exit code of the process is the return value of `main()`.
 
-### Emit LLVM IR
-
-```sh
-dorothy --emit-llvm script.txt
-```
-
-Outputs LLVM IR to stdout. Pipe it to clang to produce a native binary:
+### Emit LLVM IR & Compile to Native Binary
 
 ```sh
 dorothy --emit-llvm script.txt > out.ll
@@ -53,107 +47,202 @@ clang -o program out.ll
 ./program
 ```
 
+Or run directly in a pipeline:
+
+```sh
+dorothy --emit-llvm script.txt | clang -x ir - -o program
+./program
+```
+
+---
+
 ## Language Reference
 
-### Hello World equivalent
+### Hello World
 
-The language has no string output built-in; use `import put` and `import nl`:
+Dorothy supports standard C library functions (such as `puts`, `printf`) and native `string` types:
 
-```
-import put;
-import nl;
+```dorothy
+import "stdio.h";
 
 func main() {
-    put(72);  put(101); put(108); put(108); put(111);
-    nl();
+    let msg: string = "Hello, Dorothy!";
+    puts(msg);
     return 0;
 }
 ```
+
+### Variables and Constants (`let` and `var`)
+
+Dorothy distinguishes between mutable variables (`var`) and immutable constants (`let`).
+
+#### Constants (`let`)
+Constants must be initialized when declared and cannot be reassigned:
+
+```dorothy
+let maxUsers: int = 100;
+let greeting = "Hello";  // Type inferred as string
+
+maxUsers = 200; // Compile Error: cannot assign to constant: maxUsers
+```
+
+#### Variables (`var`)
+Variables can be reassigned:
+
+```dorothy
+var count: int = 0;
+count = count + 1;
+```
+
+#### Type Inference
+Type annotations can be omitted when an initializer expression is provided:
+
+```dorothy
+let a = 42;             // inferred as long / int
+let msg = "Dorothy";    // inferred as string
+var pi = 3.14159;       // inferred as double
+```
+
+---
 
 ### Primitive Types
 
-| Type | Size | Description |
-|------|------|-------------|
-| `char` | 1 byte | Integer (LLVM: `i8`) |
-| `int` | 4 bytes | Integer (LLVM: `i32`) |
-| `long` | 8 bytes | Integer (LLVM: `i64`) |
-| `float` | 4 bytes | Floating point (LLVM: `float`) |
-| `double` | 8 bytes | Double precision float (LLVM: `double`) |
+| Type | Size | LLVM IR | Description |
+|------|------|---------|-------------|
+| `char` | 1 byte | `i8` | 8-bit integer |
+| `int` | 4 bytes | `i32` | 32-bit integer |
+| `long` | 8 bytes | `i64` | 64-bit integer |
+| `float` | 4 bytes | `float` | Single-precision floating point |
+| `double` | 8 bytes | `double` | Double-precision floating point |
+| `string` | Pointer | `ptr` | Dynamically allocated null-terminated string |
 
-```
-char  c;
-int   i;
-long  l;
-float f;
-double d;
+#### Strings (`string`)
+Dorothy supports native heap-allocated string operations:
 
-c = 65;
-i = 100;
-l = 1000000;
-f = 3.14;
-d = 2.71828;
-```
+- **String Literals**: `"Hello, World!"`
+- **Concatenation (`+`)**: Chained string concatenation with dynamic memory allocation
+- **Comparison (`==`, `!=`, `<`, `>`, `<=`, `>=`)**: Lexicographical comparison
 
-Floating point literals use decimal notation (`3.14`, `1.0`):
+```dorothy
+import "stdio.h";
 
-```
 func main() {
-    float x;
-    float y;
-    float z;
-    x = 1.5;
-    y = 2.5;
-    z = x + y;   // 4.0 (float arithmetic)
+    let s1: string = "Hello, ";
+    let s2: string = "World!";
+    let full: string = s1 + s2; // "Hello, World!"
+
+    if (full == "Hello, World!") {
+        printf("%s\n", full);
+    }
     return 0;
 }
 ```
 
-Mixed integer/float arithmetic promotes to `double`:
+#### Floating-Point & Mixed Arithmetic
+Mixed integer and float arithmetic automatically widens to `double`:
 
-```
+```dorothy
 func main() {
-    int   n;
-    double result;
-    n = 3;
-    result = n + 1.5;   // int promoted to double → 4.5
+    let n: int = 3;
+    let result: double = n + 1.5;   // 4.5
     return 0;
 }
 ```
 
-Pointer operations using `&` and `*`:
+---
 
-```
-int a;
-int b;
-b = &a;
-*b = 10;
+### Null-Safety
+
+Dorothy provides compile-time and runtime null-safety guarantees.
+
+- **Non-nullable by default**: Variables of class types cannot be assigned `null` or left uninitialized.
+- **Nullable types (`T?`)**: Append `?` to class type names to permit `null`.
+- **Runtime Guard**: Attempting to access members on a `null` reference safely halts execution with a `NullPointerException`.
+
+```dorothy
+class Player {
+    var name: string;
+    func Player(n: string) {
+        this.name = n;
+    }
+}
+
+func main() {
+    var p1: Player = Player("Alice"); // Non-nullable, must be initialized
+    // p1 = null;                     // Compile Error!
+
+    var p2: Player? = null;           // Nullable type allows null
+    p2 = Player("Bob");
+    p2 = null;                        // Reassignment to null allowed
+
+    // p2.name;                       // Triggers NullPointerException if null
+}
 ```
 
-### Arrays
+---
 
-Fixed-size arrays (element type follows the type keyword):
+### Classes & Object-Oriented Programming
 
-```
-int arr[5];
-arr[0] = 1;
-arr[1] = 2;
+Dorothy provides a full class-based OOP system with Automatic Reference Counting (ARC) memory management:
+
+- **Classes & Constructors**: `class Name { ... func Name(...) { ... } }`
+- **Inheritance & Polymorphism**: `class Dog: Animal { override func speak() { ... } }`
+- **Abstract Classes**: `abstract class Shape { abstract func area() -> int; }`
+- **Reference Semantics**: Objects are passed by reference and automatically cleaned up when references reach zero.
+
+```dorothy
+import "stdio.h";
+
+abstract class Animal {
+    abstract func speak();
+}
+
+class Dog: Animal {
+    var name: string;
+    func Dog(name: string) {
+        this.name = name;
+    }
+
+    override func speak() {
+        printf("%s says: Woof!\n", this.name);
+    }
+}
+
+func main() {
+    let dog: Animal = Dog("Pochi");
+    dog.speak();
+    return 0;
+}
 ```
 
-Initialized at declaration:
+---
 
-```
-int arr[5] = {1, 2, 3, 4, 5};
+### Structures (`struct`)
+
+Value-type structures with custom constructors:
+
+```dorothy
+struct Point {
+    var x: int;
+    var y: int;
+
+    constructor(px: int, py: int) {
+        this.x = px;
+        this.y = py;
+    }
+}
+
+func main() {
+    let p: Point = Point(10, 20);
+    return 0;
+}
 ```
 
-String literals expand to character arrays with a null terminator:
-
-```
-int str[14] = "Hello, World!";
-```
+---
 
 ### Control Flow
 
-```
+```dorothy
 if (a > 0) {
     return a;
 } else {
@@ -169,184 +258,7 @@ for (i = 0; i < 10; i = i + 1) {
 }
 ```
 
-### Functions
-
-Function parameters use the same type keywords as variables:
-
-```
-func add(int a, int b) {
-    return a + b;
-}
-
-func main() {
-    return add(3, 4);   // 7
-}
-```
-
-`char` and `long` parameters:
-
-```
-func is_upper(char c) {
-    if (c >= 65) {
-        if (c <= 90) { return 1; }
-    }
-    return 0;
-}
-
-func main() {
-    return is_upper(65);   // 1 ('A')
-}
-```
-
-Recursive functions work:
-
-```
-func fibonacci(int a) {
-    if (a > 1) {
-        return a + fibonacci(a - 1);
-    } else {
-        return 1;
-    }
-}
-
-func main() {
-    return fibonacci(10);   // 55
-}
-```
-
-### Importing built-in functions
-
-```
-import print;
-import put;
-import nl;
-```
-
-| Function | Description |
-|----------|-------------|
-| `print(n)` | Print an integer value |
-| `put(c)` | Print a character (integer as ASCII) |
-| `nl()` | Print a newline |
-
-### Operators
-
-| Category | Operators |
-|----------|-----------|
-| Arithmetic | `+` `-` `*` `/` `%` |
-| Comparison | `==` `!=` `<` `<=` `>` `>=` |
-| Assignment | `=` |
-| Address / Dereference | `&` `*` |
-
-## Examples
-
-`script/test001.txt` — simple arithmetic:
-
-```
-func main() {
-    return 1 + 2;
-}
-```
-
-```sh
-dorothy script/test001.txt; echo $?   # 3
-```
-
-`script/test002.txt` — recursive fibonacci:
-
-```sh
-dorothy --emit-llvm script/test002.txt | clang -x ir - -o fib
-./fib; echo $?   # 55
-```
-
-`script/test003.txt` — arrays and for loop:
-
-```sh
-dorothy script/test003.txt; echo $?   # 3
-```
-
-### Primitive types sample
-
-All five primitive types in one program:
-
-```
-func main() {
-    char  c;
-    int   i;
-    long  l;
-    float f;
-    double d;
-
-    c = 65;
-    i = 100;
-    l = 1000000;
-    f = 3.14;
-    d = 2.71828;
-
-    return 0;
-}
-```
-
-Run on the VM:
-
-```sh
-dorothy types.txt; echo $?   # 0
-```
-
-Emit LLVM IR to inspect generated types:
-
-```sh
-dorothy --emit-llvm types.txt
-```
-
-Expected IR (excerpt):
-
-```llvm
-%c.addr.0 = alloca i8
-%i.addr.1 = alloca i32
-%l.addr.2 = alloca i64
-%f.addr.3 = alloca float
-%d.addr.4 = alloca double
-```
-
-### Float arithmetic sample
-
-```
-func circle_area(float r) {
-    float pi;
-    float area;
-    pi   = 3.14159;
-    area = pi * r * r;
-    return 0;
-}
-
-func main() {
-    return circle_area(5.0);
-}
-```
-
-```sh
-dorothy --emit-llvm circle.txt
-# → fmul double instructions for float arithmetic
-```
-
-### char range check
-
-```
-func is_digit(char c) {
-    if (c >= 48) {
-        if (c <= 57) { return 1; }
-    }
-    return 0;
-}
-
-func main() {
-    return is_digit(51);   // '3' → 1
-}
-```
-
-```sh
-dorothy digit.txt; echo $?   # 1
-```
+---
 
 ## Glinda Framework
 
@@ -365,17 +277,6 @@ sudo apt-get install -y libsdl2-dev pkg-config
 
 # Fedora / RHEL
 sudo dnf install -y SDL2-devel pkgconf-pkg-config
-```
-
-### Usage
-
-Import Glinda and SDL2 in your Dorothy source code:
-
-```dorothy
-import "stdio.h";
-import "string.h";
-import "SDL2/SDL.h";
-import "../frameworks/glinda/glinda.dorothy";
 ```
 
 ### Running Examples
@@ -397,14 +298,16 @@ dorothy --emit-llvm example/glinda_demo.dorothy | clang -x ir - -o glinda_demo $
 ./glinda_demo
 ```
 
+---
+
 ## Project Structure
 
 ```
 dorothy/
 ├── cli/        # CLI entry point (main.cpp)
 ├── frameworks/ # High-level frameworks (e.g., Glinda ECS framework)
-├── include/    # Headers (lexer, parser, AST, codegen)
-├── src/        # Implementation (lexer, parser, AST, VM, LLVM codegen)
+├── include/    # Headers (lexer, parser, AST, codegen, typechecker)
+├── src/        # Implementation (lexer, parser, AST, VM, LLVM codegen, typechecker)
 ├── example/    # Example programs (Breakout, Glinda demo, etc.)
 ├── tests/      # Unit & integration tests (Google Test)
 ├── Lib/        # Built static library
@@ -419,4 +322,3 @@ dorothy/
 ## License
 
 MIT License
-

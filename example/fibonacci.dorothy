@@ -11,10 +11,10 @@ func fib(n: int): int {
 }
 
 func main() {
-    var fmt = "%d\n";
+    let fmt: string = "%d\n";
     var i: int = 1;
     while (i <= 10) {
-        var r: int = fib(i);
+        let r: int = fib(i);
         printf(fmt, r);
         i = i + 1;
     }

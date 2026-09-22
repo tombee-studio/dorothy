@@ -21,11 +21,14 @@ void Lexer::tokenize(string p, int* ppos) {
         if (tokenize_keyword(p, ppos, "override", Token::KW_OVERRIDE)) continue;
         if (tokenize_keyword(p, ppos, "constructor", Token::KW_CONSTRUCTOR)) continue;
         if (tokenize_keyword(p, ppos, "this", Token::KW_THIS)) continue;
+        if (tokenize_keyword(p, ppos, "null", Token::KW_NULL)) continue;
         if (tokenize_keyword(p, ppos, "double", Token::KW_DOUBLE)) continue;
         if (tokenize_keyword(p, ppos, "float", Token::KW_FLOAT)) continue;
         if (tokenize_keyword(p, ppos, "int", Token::KW_INT)) continue;
         if (tokenize_keyword(p, ppos, "long", Token::KW_LONG)) continue;
         if (tokenize_keyword(p, ppos, "char", Token::KW_CHAR)) continue;
+        if (tokenize_keyword(p, ppos, "string", Token::KW_STRING)) continue;
+        if (tokenize_keyword(p, ppos, "String", Token::KW_STRING)) continue;
         if (tokenize_keyword(p, ppos, "while", Token::KW_WHILE)) continue;
         if (tokenize_keyword(p, ppos, "return", Token::KW_RETURN)) continue;
         if (tokenize_keyword(p, ppos, "func", Token::KW_FUNC)) continue;
@@ -59,6 +62,7 @@ void Lexer::tokenize(string p, int* ppos) {
         if (tokenize_operator(p, ppos, ']')) continue;
         if (tokenize_operator(p, ppos, ':')) continue;
         if (tokenize_operator(p, ppos, '.')) continue;
+        if (tokenize_operator(p, ppos, '?')) continue;
         if (tokenize_str(p, ppos)) continue;
         if (tokenize_char(p, ppos)) continue;
         if (tokenize_id(p, ppos)) continue;

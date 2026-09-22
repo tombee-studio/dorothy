@@ -24,9 +24,8 @@ class TransformComponent: Component {
         this.height = h;
     }
 
-    override func getName() -> long {
-        var n = "Transform";
-        return n;
+    override func getName() -> string {
+        return "Transform";
     }
 
     override func init() {}
@@ -53,18 +52,17 @@ class RectRendererComponent: Component {
         this.b = b;
     }
 
-    override func getName() -> long {
-        var n = "RectRenderer";
-        return n;
+    override func getName() -> string {
+        return "RectRenderer";
     }
 
     override func init() {}
     override func update() {}
 
     override func render(ren: long) {
-        var tName = "Transform";
-        var t: TransformComponent = this.entity.getComponent(tName);
-        if (t != 0) {
+        let tName: string = "Transform";
+        let t: TransformComponent? = this.entity.getComponent(tName);
+        if (t != null) {
             glinda_draw_rect(ren, t.x, t.y, t.width, t.height, this.r, this.g, this.b, 255);
         }
     }
@@ -84,19 +82,19 @@ class PaddleControllerComponent: Component {
         this.maxX = maxX;
     }
 
-    override func getName() -> long {
-        var n = "PaddleController";
-        return n;
+    override func getName() -> string {
+        return "PaddleController";
     }
 
     override func init() {}
 
     override func update() {
-        var state: long = SDL_GetKeyboardState(0);
+        var numkeys: int = 0;
+        let state: long = SDL_GetKeyboardState(numkeys);
         if (state != 0) {
-            var tName = "Transform";
-            var t: TransformComponent = this.entity.getComponent(tName);
-            if (t != 0) {
+            let tName: string = "Transform";
+            let t: TransformComponent? = this.entity.getComponent(tName);
+            if (t != null) {
                 // Left: 80, A: 4
                 var left_pressed: int = 0;
                 if (state[80] != 0) left_pressed = 1;
@@ -144,9 +142,8 @@ class BlockComponent: Component {
         this.alive = 1;
     }
 
-    override func getName() -> long {
-        var n = "Block";
-        return n;
+    override func getName() -> string {
+        return "Block";
     }
 
     override func init() {}
@@ -164,8 +161,8 @@ class GameManagerComponent: Component {
     var totalBlocks: int;
     var remainingBlocks: int;
     var scene: Scene;
-    var ballTrans: TransformComponent;
-    var paddleTrans: TransformComponent;
+    var ballTrans: TransformComponent?;
+    var paddleTrans: TransformComponent?;
 
     func GameManagerComponent(scene: Scene) {
         this.score = 0;
@@ -174,13 +171,12 @@ class GameManagerComponent: Component {
         this.totalBlocks = 24;
         this.remainingBlocks = 24;
         this.scene = scene;
-        this.ballTrans = 0;
-        this.paddleTrans = 0;
+        this.ballTrans = null;
+        this.paddleTrans = null;
     }
 
-    override func getName() -> long {
-        var n = "GameManager";
-        return n;
+    override func getName() -> string {
+        return "GameManager";
     }
 
     override func init() {}
@@ -193,12 +189,12 @@ class GameManagerComponent: Component {
     func onBlockHit(block: BlockComponent) {
         this.score = this.score + block.points;
         this.remainingBlocks = this.remainingBlocks - 1;
-        var fmt_hit = "Hit block! Score: %d\n";
+        let fmt_hit: string = "Hit block! Score: %d\n";
         printf(fmt_hit, this.score);
 
         if (this.remainingBlocks == 0) {
             this.gameState = 2;
-            var fmt_clear = ">>> CONGRATULATIONS! ALL BLOCKS CLEARED! Final Score: %d <<<\n";
+            let fmt_clear: string = ">>> CONGRATULATIONS! ALL BLOCKS CLEARED! Final Score: %d <<<\n";
             printf(fmt_clear, this.score);
         }
     }
@@ -207,13 +203,13 @@ class GameManagerComponent: Component {
         this.lives = this.lives - 1;
         if (this.lives <= 0) {
             this.gameState = 1;
-            var fmt_over = ">>> GAME OVER! Final Score: %d <<<\n";
+            let fmt_over: string = ">>> GAME OVER! Final Score: %d <<<\n";
             printf(fmt_over, this.score);
         } else {
-            var fmt_score = "Score: %d | Lives: %d\n";
+            let fmt_score: string = "Score: %d | Lives: %d\n";
             printf(fmt_score, this.score, this.lives);
-            if (this.ballTrans != 0) {
-                if (this.paddleTrans != 0) {
+            if (this.ballTrans != null) {
+                if (this.paddleTrans != null) {
                     this.ballTrans.x = this.paddleTrans.x + this.paddleTrans.width / 2 - this.ballTrans.width / 2;
                 } else {
                     this.ballTrans.x = 315;
@@ -232,39 +228,40 @@ class GameManagerComponent: Component {
         this.remainingBlocks = this.totalBlocks;
 
         // Revive all blocks in scene
-        var curr: Entity = this.scene.firstEntity;
-        var bName = "Block";
-        while (curr != 0) {
-            var b: BlockComponent = curr.getComponent(bName);
-            if (b != 0) {
+        var curr: Entity? = this.scene.firstEntity;
+        let bName: string = "Block";
+        while (curr != null) {
+            let b: BlockComponent? = curr.getComponent(bName);
+            if (b != null) {
                 b.alive = 1;
                 curr.active = 1;
             }
             curr = curr.next;
         }
 
-        if (this.paddleTrans != 0) {
+        if (this.paddleTrans != null) {
             this.paddleTrans.x = 280;
             this.paddleTrans.y = 440;
         }
 
-        if (this.ballTrans != 0) {
+        if (this.ballTrans != null) {
             this.ballTrans.x = 315;
             this.ballTrans.y = 300;
             this.ballTrans.vx = 3;
             this.ballTrans.vy = 0 - 4;
         }
 
-        var restart_msg = "Game Restarted!\n";
+        let restart_msg: string = "Game Restarted!\n";
         printf(restart_msg);
-        var fmt_score = "Score: %d | Lives: %d\n";
+        let fmt_score: string = "Score: %d | Lives: %d\n";
         printf(fmt_score, this.score, this.lives);
     }
 
     override func update() {
         // Handle restart key 'R' (Scancode 21)
         if (this.gameState != 0) {
-            var state: long = SDL_GetKeyboardState(0);
+            var numkeys: int = 0;
+            let state: long = SDL_GetKeyboardState(numkeys);
             if (state != 0) {
                 if (state[21] != 0) {
                     this.restart();
@@ -294,7 +291,7 @@ class GameManagerComponent: Component {
 class BallPhysicsComponent: Component {
     var scene: Scene;
     var gameManager: GameManagerComponent;
-    var paddleTrans: TransformComponent;
+    var paddleTrans: TransformComponent?;
 
     func BallPhysicsComponent(scene: Scene, gm: GameManagerComponent, padT: TransformComponent) {
         this.scene = scene;
@@ -302,18 +299,17 @@ class BallPhysicsComponent: Component {
         this.paddleTrans = padT;
     }
 
-    override func getName() -> long {
-        var n = "BallPhysics";
-        return n;
+    override func getName() -> string {
+        return "BallPhysics";
     }
 
     override func init() {}
 
     override func update() {
         if (this.gameManager.gameState == 0) {
-            var tName = "Transform";
-            var t: TransformComponent = this.entity.getComponent(tName);
-            if (t != 0) {
+            let tName: string = "Transform";
+            let t: TransformComponent? = this.entity.getComponent(tName);
+            if (t != null) {
                 // Left wall
                 if (t.x <= 10) {
                     t.x = 10;
@@ -339,11 +335,11 @@ class BallPhysicsComponent: Component {
                 }
 
                 // Paddle collision
-                if (this.paddleTrans != 0) {
-                    var px: int = this.paddleTrans.x;
-                    var py: int = this.paddleTrans.y;
-                    var pw: int = this.paddleTrans.width;
-                    var ph: int = this.paddleTrans.height;
+                if (this.paddleTrans != null) {
+                    let px: int = this.paddleTrans.x;
+                    let py: int = this.paddleTrans.y;
+                    let pw: int = this.paddleTrans.width;
+                    let ph: int = this.paddleTrans.height;
 
                     if (t.y + t.height >= py) {
                         if (t.y <= py + ph) {
@@ -353,9 +349,9 @@ class BallPhysicsComponent: Component {
                                         t.vy = 0 - t.vy;
                                         t.y = py - t.height;
 
-                                        var center_p: int = px + pw / 2;
-                                        var center_b: int = t.x + t.width / 2;
-                                        var diff: int = center_b - center_p;
+                                        let center_p: int = px + pw / 2;
+                                        let center_b: int = t.x + t.width / 2;
+                                        let diff: int = center_b - center_p;
                                         if (diff < 0 - 15) {
                                             t.vx = 0 - 4;
                                         }
@@ -370,15 +366,15 @@ class BallPhysicsComponent: Component {
                 }
 
                 // Block collisions
-                var currE: Entity = this.scene.firstEntity;
-                var bName = "Block";
-                while (currE != 0) {
+                var currE: Entity? = this.scene.firstEntity;
+                let bName: string = "Block";
+                while (currE != null) {
                     if (currE.active == 1) {
-                        var blk: BlockComponent = currE.getComponent(bName);
-                        if (blk != 0) {
+                        let blk: BlockComponent? = currE.getComponent(bName);
+                        if (blk != null) {
                             if (blk.alive == 1) {
-                                var bt: TransformComponent = currE.getComponent(tName);
-                                if (bt != 0) {
+                                let bt: TransformComponent? = currE.getComponent(tName);
+                                if (bt != null) {
                                     if (t.x + t.width >= bt.x) {
                                         if (t.x <= bt.x + bt.width) {
                                             if (t.y + t.height >= bt.y) {
@@ -413,41 +409,41 @@ class BallPhysicsComponent: Component {
 // Main Function
 // ==========================================
 func main() -> int {
-    var welcome_msg = "=== Dorothy Breakout Game Started (Glinda ECS Framework)! ===\nControls: [Left/Right] or [A/D] to move, [ESC] to quit, [R] to restart\n";
+    let welcome_msg: string = "=== Dorothy Breakout Game Started (Glinda ECS Framework)! ===\nControls: [Left/Right] or [A/D] to move, [ESC] to quit, [R] to restart\n";
     printf(welcome_msg);
 
-    var app: GlindaApp = GlindaApp(640, 480);
+    let app: GlindaApp = GlindaApp(640, 480);
     app.setBackgroundColor(15, 23, 42); // Dark slate background
 
-    var title = "Dorothy Breakout - Glinda ECS Framework";
-    var err: int = app.initSDL(title);
+    let title: string = "Dorothy Breakout - Glinda ECS Framework";
+    let err: int = app.initSDL(title);
     if (err != 0) {
         return 1;
     }
 
-    var scene: Scene = Scene();
+    let scene: Scene = Scene();
 
     // 1. GameManager Entity
-    var gmEntity: Entity = Entity();
-    var gm: GameManagerComponent = GameManagerComponent(scene);
+    let gmEntity: Entity = Entity();
+    let gm: GameManagerComponent = GameManagerComponent(scene);
     gmEntity.addComponent(gm);
     scene.addEntity(gmEntity);
 
     // 2. Paddle Entity
-    var paddleEntity: Entity = Entity();
-    var padTrans: TransformComponent = TransformComponent(280, 440, 0, 0, 80, 12);
-    var padCtrl: PaddleControllerComponent = PaddleControllerComponent(6, 10, 630);
-    var padRender: RectRendererComponent = RectRendererComponent(56, 189, 248); // Cyan
+    let paddleEntity: Entity = Entity();
+    let padTrans: TransformComponent = TransformComponent(280, 440, 0, 0, 80, 12);
+    let padCtrl: PaddleControllerComponent = PaddleControllerComponent(6, 10, 630);
+    let padRender: RectRendererComponent = RectRendererComponent(56, 189, 248); // Cyan
     paddleEntity.addComponent(padTrans);
     paddleEntity.addComponent(padCtrl);
     paddleEntity.addComponent(padRender);
     scene.addEntity(paddleEntity);
 
     // 3. Ball Entity
-    var ballEntity: Entity = Entity();
-    var ballTrans: TransformComponent = TransformComponent(315, 300, 3, 0 - 4, 10, 10);
-    var ballPhysics: BallPhysicsComponent = BallPhysicsComponent(scene, gm, padTrans);
-    var ballRender: RectRendererComponent = RectRendererComponent(255, 255, 255); // White
+    let ballEntity: Entity = Entity();
+    let ballTrans: TransformComponent = TransformComponent(315, 300, 3, 0 - 4, 10, 10);
+    let ballPhysics: BallPhysicsComponent = BallPhysicsComponent(scene, gm, padTrans);
+    let ballRender: RectRendererComponent = RectRendererComponent(255, 255, 255); // White
     ballEntity.addComponent(ballTrans);
     ballEntity.addComponent(ballPhysics);
     ballEntity.addComponent(ballRender);
@@ -461,9 +457,9 @@ func main() -> int {
     while (row < 3) {
         var col: int = 0;
         while (col < 8) {
-            var bx: int = 24 + col * 76;
-            var by: int = 50 + row * 26;
-            var pts: int = (3 - row) * 10;
+            let bx: int = 24 + col * 76;
+            let by: int = 50 + row * 26;
+            let pts: int = (3 - row) * 10;
 
             var r: int = 16;
             var g: int = 185;
@@ -479,10 +475,10 @@ func main() -> int {
                 b = 11; // Orange (row 1)
             }
 
-            var blockEntity: Entity = Entity();
-            var bTrans: TransformComponent = TransformComponent(bx, by, 0, 0, 68, 18);
-            var bComp: BlockComponent = BlockComponent(row, col, pts);
-            var bRender: RectRendererComponent = RectRendererComponent(r, g, b);
+            let blockEntity: Entity = Entity();
+            let bTrans: TransformComponent = TransformComponent(bx, by, 0, 0, 68, 18);
+            let bComp: BlockComponent = BlockComponent(row, col, pts);
+            let bRender: RectRendererComponent = RectRendererComponent(r, g, b);
 
             blockEntity.addComponent(bTrans);
             blockEntity.addComponent(bComp);
@@ -494,13 +490,13 @@ func main() -> int {
         row = row + 1;
     }
 
-    var fmt_score = "Score: %d | Lives: %d\n";
+    let fmt_score: string = "Score: %d | Lives: %d\n";
     printf(fmt_score, gm.score, gm.lives);
 
     app.setScene(scene);
     app.run();
 
-    var exit_msg = "Thanks for playing Dorothy Breakout!\n";
+    let exit_msg: string = "Thanks for playing Dorothy Breakout!\n";
     printf(exit_msg);
 
     return 0;

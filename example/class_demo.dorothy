@@ -26,7 +26,7 @@ class Rectangle: Shape {
     }
 
     override func describe() {
-        var msg = "Rectangle(w=%d, h=%d, area=%d)\n";
+        let msg: string = "Rectangle(w=%d, h=%d, area=%d)\n";
         printf(msg, this.width, this.height, this.area());
     }
 }
@@ -43,7 +43,7 @@ class Square: Shape {
     }
 
     override func describe() {
-        var msg = "Square(side=%d, area=%d)\n";
+        let msg: string = "Square(side=%d, area=%d)\n";
         printf(msg, this.side, this.area());
     }
 }
@@ -74,39 +74,39 @@ func printShapeInfo(s: Shape) {
 }
 
 func main() -> int {
-    var header = "=== Dorothy Class Feature Demo ===\n\n";
+    let header: string = "=== Dorothy Class Feature Demo ===\n\n";
     printf(header);
 
     // 1. Reference semantics demo
-    var sec1 = "--- 1. Reference Semantics ---\n";
+    let sec1: string = "--- 1. Reference Semantics ---\n";
     printf(sec1);
-    var c1: Counter = Counter(10);
-    var c2: Counter = c1; // c2 references the exact same instance as c1
-    var msg_init = "Initial c1: %d, c2: %d\n";
+    let c1: Counter = Counter(10);
+    let c2: Counter = c1; // c2 references the exact same instance as c1
+    let msg_init: string = "Initial c1: %d, c2: %d\n";
     printf(msg_init, c1.getCount(), c2.getCount());
 
     c2.increment(5);
-    var msg_c2 = "After c2.increment(5) -> c1: %d, c2: %d\n";
+    let msg_c2: string = "After c2.increment(5) -> c1: %d, c2: %d\n";
     printf(msg_c2, c1.getCount(), c2.getCount());
 
     modifyCounter(c1, 20);
-    var msg_mod = "After modifyCounter(c1, 20) -> c1: %d, c2: %d\n\n";
+    let msg_mod: string = "After modifyCounter(c1, 20) -> c1: %d, c2: %d\n\n";
     printf(msg_mod, c1.getCount(), c2.getCount());
 
     // 2. Inheritance & Polymorphism Demo
-    var sec2 = "--- 2. Inheritance & Polymorphism ---\n";
+    let sec2: string = "--- 2. Inheritance & Polymorphism ---\n";
     printf(sec2);
-    var rect: Rectangle = Rectangle(6, 7);
-    var sq: Square = Square(5);
+    let rect: Rectangle = Rectangle(6, 7);
+    let sq: Square = Square(5);
 
     printShapeInfo(rect);
     printShapeInfo(sq);
 
-    var totalArea: int = rect.area() + sq.area();
-    var msg_tot = "Total Area: %d\n\n";
+    let totalArea: int = rect.area() + sq.area();
+    let msg_tot: string = "Total Area: %d\n\n";
     printf(msg_tot, totalArea);
 
-    var footer = "=== All Class Demos Completed Successfully! ===\n";
+    let footer: string = "=== All Class Demos Completed Successfully! ===\n";
     printf(footer);
     return 0;
 }

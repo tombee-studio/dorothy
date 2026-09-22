@@ -52,9 +52,14 @@ struct LLVMGenCtx {
     std::map<std::string, VarType> array_elem_types;
     // Class support
     std::map<std::string, std::string> class_var_types;
+    std::map<std::string, bool> class_var_nullable;
     std::string this_class;
     std::string this_ptr_reg;
     bool classes_emitted = false;
+    // String primitive support
+    std::map<std::string, std::string> str_literal_map;
+    int str_lit_counter = 0;
+    bool str_runtime_emitted = false;
 
     // Scope management for class reference counting (ARC)
     struct Scope {

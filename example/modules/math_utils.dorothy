@@ -9,12 +9,12 @@ struct Vector2 {
 }
 
 func add_vec(a: Vector2, b: Vector2) -> Vector2 {
-    var res: Vector2 = Vector2(a.x + b.x, a.y + b.y);
+    let res: Vector2 = Vector2(a.x + b.x, a.y + b.y);
     return res;
 }
 
 func scale_vec(v: Vector2, factor: int) -> Vector2 {
-    var res: Vector2 = Vector2(v.x * factor, v.y * factor);
+    let res: Vector2 = Vector2(v.x * factor, v.y * factor);
     return res;
 }
 
