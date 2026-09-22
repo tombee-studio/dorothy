@@ -322,7 +322,7 @@ TEST(ConstantsTest, LLVMConstClassAndStruct) {
         }
         class Greeter {
             var prefix: string;
-            func Greeter(p: string) {
+            constructor(p: string) {
                 this.prefix = p;
             }
             func greet(name: string) {

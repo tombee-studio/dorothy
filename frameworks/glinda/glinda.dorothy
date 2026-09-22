@@ -18,7 +18,7 @@ class Entity {
     var firstComponent: Component?;
     var next: Entity?;
 
-    func Entity() {
+    constructor() {
         this.active = 1;
         this.firstComponent = null;
         this.next = null;
@@ -74,7 +74,7 @@ class Entity {
 class Scene {
     var firstEntity: Entity?;
 
-    func Scene() {
+    constructor() {
         this.firstEntity = null;
     }
 
@@ -130,7 +130,7 @@ class GlindaApp {
     var bgG: int;
     var bgB: int;
 
-    func GlindaApp(w: int, h: int) {
+    constructor(w: int, h: int) {
         this.window = 0;
         this.renderer = 0;
         this.running = 0;

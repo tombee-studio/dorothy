@@ -15,7 +15,7 @@ class TransformComponent: Component {
     var width: int;
     var height: int;
 
-    func TransformComponent(x: int, y: int, vx: int, vy: int, w: int, h: int) {
+    constructor(x: int, y: int, vx: int, vy: int, w: int, h: int) {
         this.x = x;
         this.y = y;
         this.vx = vx;
@@ -46,7 +46,7 @@ class RectRendererComponent: Component {
     var g: int;
     var b: int;
 
-    func RectRendererComponent(r: int, g: int, b: int) {
+    constructor(r: int, g: int, b: int) {
         this.r = r;
         this.g = g;
         this.b = b;
@@ -75,7 +75,7 @@ class BouncingPhysicsComponent: Component {
     var screenW: int;
     var screenH: int;
 
-    func BouncingPhysicsComponent(sw: int, sh: int) {
+    constructor(sw: int, sh: int) {
         this.screenW = sw;
         this.screenH = sh;
     }
@@ -127,7 +127,7 @@ class PlayerControllerComponent: Component {
     var speed: int;
     var screenW: int;
 
-    func PlayerControllerComponent(spd: int, sw: int) {
+    constructor(spd: int, sw: int) {
         this.speed = spd;
         this.screenW = sw;
     }

@@ -227,7 +227,7 @@ TEST(ArrayTest, ArrayRemoveReferenceType) {
     std::string src = R"(
 class Player {
     var id: int;
-    func Player(id: int) {
+    constructor(id: int) {
         this.id = id;
     }
 }
@@ -284,14 +284,14 @@ TEST(ArrayTest, ClassMemberArrayPushAndLength) {
     std::string src = R"(
 class Item {
     var id: int;
-    func Item(id: int) {
+    constructor(id: int) {
         this.id = id;
     }
 }
 
 class Inventory {
     var items: Array<Item>;
-    func Inventory() {
+    constructor() {
         this.items = [];
     }
     func addItem(item: Item) {
@@ -317,7 +317,7 @@ TEST(ArrayTest, ClassMemberIntArrayIndexAccess) {
     std::string src = R"(
 class Grid {
     var cells: int[];
-    func Grid() {
+    constructor() {
         this.cells = [10, 20, 30, 40];
     }
     func getCell(idx: int) -> int {

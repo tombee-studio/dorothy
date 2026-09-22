@@ -15,7 +15,7 @@ class TransformComponent: Component {
     var width: int;
     var height: int;
 
-    func TransformComponent(x: int, y: int, vx: int, vy: int, w: int, h: int) {
+    constructor(x: int, y: int, vx: int, vy: int, w: int, h: int) {
         this.x = x;
         this.y = y;
         this.vx = vx;
@@ -46,7 +46,7 @@ class RectRendererComponent: Component {
     var g: int;
     var b: int;
 
-    func RectRendererComponent(r: int, g: int, b: int) {
+    constructor(r: int, g: int, b: int) {
         this.r = r;
         this.g = g;
         this.b = b;
@@ -76,7 +76,7 @@ class PaddleControllerComponent: Component {
     var minX: int;
     var maxX: int;
 
-    func PaddleControllerComponent(speed: int, minX: int, maxX: int) {
+    constructor(speed: int, minX: int, maxX: int) {
         this.speed = speed;
         this.minX = minX;
         this.maxX = maxX;
@@ -135,7 +135,7 @@ class BlockComponent: Component {
     var points: int;
     var alive: int;
 
-    func BlockComponent(row: int, col: int, points: int) {
+    constructor(row: int, col: int, points: int) {
         this.row = row;
         this.col = col;
         this.points = points;
@@ -164,7 +164,7 @@ class GameManagerComponent: Component {
     var ballTrans: TransformComponent?;
     var paddleTrans: TransformComponent?;
 
-    func GameManagerComponent(scene: Scene) {
+    constructor(scene: Scene) {
         this.score = 0;
         this.lives = 3;
         this.gameState = 0;
@@ -293,7 +293,7 @@ class BallPhysicsComponent: Component {
     var gameManager: GameManagerComponent;
     var paddleTrans: TransformComponent?;
 
-    func BallPhysicsComponent(scene: Scene, gm: GameManagerComponent, padT: TransformComponent) {
+    constructor(scene: Scene, gm: GameManagerComponent, padT: TransformComponent) {
         this.scene = scene;
         this.gameManager = gm;
         this.paddleTrans = padT;

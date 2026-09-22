@@ -98,7 +98,7 @@ TEST(ClassTest, ParseBasicClass) {
         "class Point {\n"
         "    var x: int;\n"
         "    var y: int;\n"
-        "    func Point(x: int, y: int) {\n"
+        "    constructor(x: int, y: int) {\n"
         "        this.x = x;\n"
         "        this.y = y;\n"
         "    }\n"
@@ -120,12 +120,12 @@ TEST(ClassTest, ParseInheritance) {
     auto tokens = lexer.lex(
         "class Base {\n"
         "    var id: int;\n"
-        "    func Base(id: int) { this.id = id; }\n"
+        "    constructor(id: int) { this.id = id; }\n"
         "    func getId() -> int { return this.id; }\n"
         "}\n"
         "class Derived: Base {\n"
         "    var extra: int;\n"
-        "    func Derived(id: int, extra: int) {\n"
+        "    constructor(id: int, extra: int) {\n"
         "        this.id = id;\n"
         "        this.extra = extra;\n"
         "    }\n"
@@ -144,7 +144,7 @@ TEST(ClassTest, ParseAbstractClassAndOverride) {
         "}\n"
         "class Square: Shape {\n"
         "    var side: int;\n"
-        "    func Square(side: int) { this.side = side; }\n"
+        "    constructor(side: int) { this.side = side; }\n"
         "    override func area() -> int {\n"
         "        return this.side * this.side;\n"
         "    }\n"
@@ -154,9 +154,67 @@ TEST(ClassTest, ParseAbstractClassAndOverride) {
     EXPECT_NO_THROW(parser.parse(tokens));
 }
 
+TEST(ClassTest, ClassConstructorNoFuncKeyword) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex(
+        "class MyClass {\n"
+        "    var val: int;\n"
+        "    constructor(v: int) {\n"
+        "        this.val = v;\n"
+        "    }\n"
+        "}\n"
+        "func main() -> int {\n"
+        "    var m: MyClass = MyClass(42);\n"
+        "    return m.val;\n"
+        "}\n"
+    );
+    EXPECT_NO_THROW(parser.parse(tokens));
+}
+
 // ==========================================
 // 2. パーサーレベル（異常系）
 // ==========================================
+
+TEST(ClassTest, ClassConstructorDuplicateThrows) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex(
+        "class MyClass {\n"
+        "    var val: int;\n"
+        "    constructor(v: int) { this.val = v; }\n"
+        "    constructor() { this.val = 0; }\n"
+        "}\n"
+        "func main() -> int { return 0; }\n"
+    );
+    EXPECT_THROW(parser.parse(tokens), ParseError);
+}
+
+TEST(ClassTest, ClassConstructorFuncKeywordThrows) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex(
+        "class MyClass {\n"
+        "    var val: int;\n"
+        "    func constructor(v: int) { this.val = v; }\n"
+        "}\n"
+        "func main() -> int { return 0; }\n"
+    );
+    EXPECT_THROW(parser.parse(tokens), ParseError);
+}
+
+TEST(ClassTest, ClassConstructorFuncClassNameThrows) {
+    Lexer lexer;
+    Parser parser;
+    auto tokens = lexer.lex(
+        "class MyClass {\n"
+        "    var val: int;\n"
+        "    func MyClass(v: int) { this.val = v; }\n"
+        "}\n"
+        "func main() -> int { return 0; }\n"
+    );
+    EXPECT_THROW(parser.parse(tokens), ParseError);
+}
 
 TEST(ClassTest, InstantiateAbstractClassThrows) {
     Lexer lexer;
@@ -182,7 +240,7 @@ TEST(ClassTest, UnimplementedAbstractMethodThrows) {
         "}\n"
         "class Incomplete: Shape {\n"
         "    var side: int;\n"
-        "    func Incomplete(side: int) { this.side = side; }\n"
+        "    constructor(side: int) { this.side = side; }\n"
         "}\n"
         "func main() -> int { return 0; }\n"
     );
@@ -194,10 +252,10 @@ TEST(ClassTest, InvalidOverrideMethodThrows) {
     Parser parser;
     auto tokens = lexer.lex(
         "class Base {\n"
-        "    func Base() {}\n"
+        "    constructor() {}\n"
         "}\n"
         "class Derived: Base {\n"
-        "    func Derived() {}\n"
+        "    constructor() {}\n"
         "    override func notInBase() -> int { return 1; }\n"
         "}\n"
         "func main() -> int { return 0; }\n"
@@ -222,7 +280,7 @@ TEST(ClassTest, InheritUndefinedClassThrows) {
     Parser parser;
     auto tokens = lexer.lex(
         "class Derived: NonExistentBase {\n"
-        "    func Derived() {}\n"
+        "    constructor() {}\n"
         "}\n"
         "func main() -> int { return 0; }\n"
     );
@@ -237,7 +295,7 @@ TEST(ClassTest, LLVMEmitClassAndVTable) {
     auto ir = llvm_emit_ir(
         "class Animal {\n"
         "    var age: int;\n"
-        "    func Animal(age: int) { this.age = age; }\n"
+        "    constructor(age: int) { this.age = age; }\n"
         "    func speak() -> int { return 42; }\n"
         "}\n"
         "func main() -> int {\n"
@@ -267,7 +325,7 @@ TEST(ClassTest, ExecBasicClass) {
         "class Point {\n"
         "    var x: int;\n"
         "    var y: int;\n"
-        "    func Point(x: int, y: int) {\n"
+        "    constructor(x: int, y: int) {\n"
         "        this.x = x;\n"
         "        this.y = y;\n"
         "    }\n"
@@ -284,7 +342,7 @@ TEST(ClassTest, ExecClassMethod) {
     std::string src =
         "class Calculator {\n"
         "    var base: int;\n"
-        "    func Calculator(b: int) { this.base = b; }\n"
+        "    constructor(b: int) { this.base = b; }\n"
         "    func add(v: int) -> int { return this.base + v; }\n"
         "    func mul(v: int) -> int { return this.base * v; }\n"
         "}\n"
@@ -300,7 +358,7 @@ TEST(ClassTest, ExecPassByReferenceAssignment) {
     std::string src =
         "class Box {\n"
         "    var value: int;\n"
-        "    func Box(v: int) { this.value = v; }\n"
+        "    constructor(v: int) { this.value = v; }\n"
         "}\n"
         "func main() -> int {\n"
         "    var b1: Box = Box(10);\n"
@@ -316,7 +374,7 @@ TEST(ClassTest, ExecPassByReferenceFunctionArg) {
     std::string src =
         "class Counter {\n"
         "    var count: int;\n"
-        "    func Counter(c: int) { this.count = c; }\n"
+        "    constructor(c: int) { this.count = c; }\n"
         "}\n"
         "func increment(c: Counter, amount: int) {\n"
         "    c.count = c.count + amount;\n"
@@ -334,12 +392,12 @@ TEST(ClassTest, ExecInheritanceBasic) {
     std::string src =
         "class Person {\n"
         "    var age: int;\n"
-        "    func Person(age: int) { this.age = age; }\n"
+        "    constructor(age: int) { this.age = age; }\n"
         "    func getAge() -> int { return this.age; }\n"
         "}\n"
         "class Employee: Person {\n"
         "    var salary: int;\n"
-        "    func Employee(age: int, salary: int) {\n"
+        "    constructor(age: int, salary: int) {\n"
         "        this.age = age;\n"
         "        this.salary = salary;\n"
         "    }\n"
@@ -356,11 +414,11 @@ TEST(ClassTest, ExecInheritanceBasic) {
 TEST(ClassTest, ExecMethodOverridePolymorphism) {
     std::string src =
         "class Base {\n"
-        "    func Base() {}\n"
+        "    constructor() {}\n"
         "    func compute() -> int { return 10; }\n"
         "}\n"
         "class Derived: Base {\n"
-        "    func Derived() {}\n"
+        "    constructor() {}\n"
         "    override func compute() -> int { return 25; }\n"
         "}\n"
         "func evaluate(b: Base) -> int {\n"
@@ -383,12 +441,12 @@ TEST(ClassTest, ExecAbstractClassPolymorphism) {
         "class Rectangle: Shape {\n"
         "    var w: int;\n"
         "    var h: int;\n"
-        "    func Rectangle(w: int, h: int) { this.w = w; this.h = h; }\n"
+        "    constructor(w: int, h: int) { this.w = w; this.h = h; }\n"
         "    override func area() -> int { return this.w * this.h; }\n"
         "}\n"
         "class Square: Shape {\n"
         "    var side: int;\n"
-        "    func Square(side: int) { this.side = side; }\n"
+        "    constructor(side: int) { this.side = side; }\n"
         "    override func area() -> int { return this.side * this.side; }\n"
         "}\n"
         "func getArea(s: Shape) -> int {\n"
@@ -407,12 +465,12 @@ TEST(ClassTest, ExecMultiLevelInheritance) {
     std::string src =
         "class Level1 {\n"
         "    var a: int;\n"
-        "    func Level1(a: int) { this.a = a; }\n"
+        "    constructor(a: int) { this.a = a; }\n"
         "    func val() -> int { return this.a; }\n"
         "}\n"
         "class Level2: Level1 {\n"
         "    var b: int;\n"
-        "    func Level2(a: int, b: int) {\n"
+        "    constructor(a: int, b: int) {\n"
         "        this.a = a;\n"
         "        this.b = b;\n"
         "    }\n"
@@ -420,7 +478,7 @@ TEST(ClassTest, ExecMultiLevelInheritance) {
         "}\n"
         "class Level3: Level2 {\n"
         "    var c: int;\n"
-        "    func Level3(a: int, b: int, c: int) {\n"
+        "    constructor(a: int, b: int, c: int) {\n"
         "        this.a = a;\n"
         "        this.b = b;\n"
         "        this.c = c;\n"
@@ -448,7 +506,7 @@ TEST(ClassTest, ExecReassignmentCleanup) {
     std::string src =
         "class Node {\n"
         "    var val: int;\n"
-        "    func Node(v: int) { this.val = v; }\n"
+        "    constructor(v: int) { this.val = v; }\n"
         "}\n"
         "func main() -> int {\n"
         "    var a: Node = Node(10);\n"
@@ -464,7 +522,7 @@ TEST(ClassTest, ExecSelfAssignmentSafe) {
     std::string src =
         "class Node {\n"
         "    var val: int;\n"
-        "    func Node(v: int) { this.val = v; }\n"
+        "    constructor(v: int) { this.val = v; }\n"
         "}\n"
         "func main() -> int {\n"
         "    var a: Node = Node(99);\n"
@@ -479,11 +537,11 @@ TEST(ClassTest, ExecNestedClassMemberRecursiveCleanup) {
     std::string src =
         "class Child {\n"
         "    var id: int;\n"
-        "    func Child(i: int) { this.id = i; }\n"
+        "    constructor(i: int) { this.id = i; }\n"
         "}\n"
         "class Parent {\n"
         "    var child: Child;\n"
-        "    func Parent(c: Child) { this.child = c; }\n"
+        "    constructor(c: Child) { this.child = c; }\n"
         "}\n"
         "func test_nested() -> int {\n"
         "    var c: Child = Child(50);\n"
@@ -501,7 +559,7 @@ TEST(ClassTest, ExecFunctionReturnOwnershipTransfer) {
     std::string src =
         "class Item {\n"
         "    var price: int;\n"
-        "    func Item(p: int) { this.price = p; }\n"
+        "    constructor(p: int) { this.price = p; }\n"
         "}\n"
         "func make_item(p: int) -> Item {\n"
         "    var it: Item = Item(p);\n"
@@ -522,11 +580,11 @@ TEST(ClassTest, ExecPolymorphicDestructorWithFields) {
         "}\n"
         "class ChildObj {\n"
         "    var score: int;\n"
-        "    func ChildObj(s: int) { this.score = s; }\n"
+        "    constructor(s: int) { this.score = s; }\n"
         "}\n"
         "class DerivedObj: BaseObj {\n"
         "    var child: ChildObj;\n"
-        "    func DerivedObj(c: ChildObj) { this.child = c; }\n"
+        "    constructor(c: ChildObj) { this.child = c; }\n"
         "    override func getVal() -> int { return this.child.score; }\n"
         "}\n"
         "func calc(b: BaseObj) -> int {\n"
@@ -548,7 +606,7 @@ TEST(ClassTest, ExecMassiveDynamicCreationInLoop) {
         "    var x: int;\n"
         "    var y: int;\n"
         "    var damage: int;\n"
-        "    func Bullet(x: int, y: int, d: int) {\n"
+        "    constructor(x: int, y: int, d: int) {\n"
         "        this.x = x;\n"
         "        this.y = y;\n"
         "        this.damage = d;\n"
@@ -567,4 +625,3 @@ TEST(ClassTest, ExecMassiveDynamicCreationInLoop) {
         "}\n";
     EXPECT_EQ(run_llvm(src), 50);
 }
-
