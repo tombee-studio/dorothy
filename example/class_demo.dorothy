@@ -16,7 +16,7 @@ class Rectangle: Shape {
     var width: int;
     var height: int;
 
-    func Rectangle(w: int, h: int) {
+    constructor(w: int, h: int) {
         this.width = w;
         this.height = h;
     }
@@ -34,7 +34,7 @@ class Rectangle: Shape {
 class Square: Shape {
     var side: int;
 
-    func Square(s: int) {
+    constructor(s: int) {
         this.side = s;
     }
 
@@ -51,7 +51,7 @@ class Square: Shape {
 class Counter {
     var count: int;
 
-    func Counter(initial: int) {
+    constructor(initial: int) {
         this.count = initial;
     }
 

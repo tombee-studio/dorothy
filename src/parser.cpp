@@ -249,6 +249,9 @@ void Parser::parse_struct_def(vector<Token> &tokens) {
             }
         } else if (tokens[_pos].type == Token::KW_CONSTRUCTOR) {
             // constructor(params) { body }
+            if (sdef.constructor) {
+                throw ParseError("duplicate constructor in struct " + struct_name, tokens[_pos]);
+            }
             _pos++;
             auto params_decl = parse_declargs(tokens);
             for (auto *d : params_decl)
@@ -356,6 +359,9 @@ void Parser::parse_class_def(vector<Token> &tokens) {
             }
         } else if (tokens[_pos].type == Token::KW_CONSTRUCTOR) {
             // constructor(params) { body }
+            if (cdef.constructor) {
+                throw ParseError("duplicate constructor in class '" + class_name + "'", tokens[_pos]);
+            }
             _pos++;
             auto params_decl = parse_declargs(tokens);
             vector<pair<string, VarType>> params;
@@ -429,73 +435,66 @@ void Parser::parse_class_def(vector<Token> &tokens) {
             }
             if (consume(tokens, Token::KW_FUNC).type == Token::NONE)
                 throw ParseError("expected 'func' in method declaration", tokens[_pos]);
+            if (tokens[_pos].type == Token::KW_CONSTRUCTOR) {
+                throw ParseError("constructors must not use the 'func' keyword; use 'constructor(...)' instead", tokens[_pos]);
+            }
             Token mname = consume(tokens, Token::TK_ID);
             if (mname.type == Token::NONE)
                 throw ParseError("expected method name", tokens[_pos]);
-            auto params_decl = parse_declargs(tokens);
-
-            // Check if this is a constructor: func ClassName(...) { ... }
             if (mname.id == class_name) {
-                if (is_override) {
-                    throw ParseError("constructor cannot be marked 'override'", mname);
-                }
-                auto body = parse_block(tokens);
-                vector<pair<string, VarType>> params;
-                for (auto *d : params_decl)
-                    params.push_back({d->getId(), d->getType()});
-                cdef.constructor = new ConstructorInfo{params, body};
-            } else {
-                VarType ret_type = VarType::LONG;
-                string ret_type_name = "";
-                bool is_ret_nullable = false;
-                if (consume(tokens, (Token::Type)':').type != Token::NONE ||
-                    consume(tokens, Token::TK_ARROW).type != Token::NONE) {
-                    if (is_type_keyword(tokens[_pos].type)) {
-                        ret_type = token_to_vartype(tokens[_pos].type);
-                        _pos++;
-                    } else if (tokens[_pos].type == Token::TK_ID && _class_defs.count(tokens[_pos].id)) {
-                        ret_type = VarType::CLASS;
-                        ret_type_name = tokens[_pos].id;
-                        _pos++;
-                        if (tokens[_pos].type == (Token::Type)'?') {
-                            is_ret_nullable = true;
-                            _pos++;
-                        }
-                    } else if (tokens[_pos].type == Token::TK_ID && _struct_defs.count(tokens[_pos].id)) {
-                        ret_type = VarType::STRUCT;
-                        ret_type_name = tokens[_pos].id;
-                        _pos++;
-                    } else {
-                        throw ParseError("expected return type after ':' or '->'", tokens[_pos]);
-                    }
-                }
-                auto body = parse_block(tokens);
-
-                int existing_vtable_idx = cdef.getMethodVtableIndex(mname.id);
-                if (is_override && existing_vtable_idx < 0) {
-                    throw ParseError("method '" + mname.id + "' marked override does not override any base class method", mname);
-                }
-
-                auto *minfo = new MethodInfo();
-                minfo->name = mname.id;
-                minfo->params = params_decl;
-                minfo->ret_type = ret_type;
-                minfo->ret_type_name = ret_type_name;
-                minfo->is_ret_nullable = is_ret_nullable;
-                minfo->body = body;
-                minfo->is_abstract = false;
-                minfo->is_override = is_override || (existing_vtable_idx >= 0);
-                minfo->class_name = class_name;
-
-                if (existing_vtable_idx >= 0) {
-                    minfo->vtable_index = existing_vtable_idx;
-                    cdef.vtable_methods[existing_vtable_idx] = minfo;
-                } else {
-                    minfo->vtable_index = (int)cdef.vtable_methods.size();
-                    cdef.vtable_methods.push_back(minfo);
-                }
-                cdef.methods[mname.id] = minfo;
+                throw ParseError("constructors must be declared with 'constructor(...)', not 'func " + class_name + "(...)'", mname);
             }
+            auto params_decl = parse_declargs(tokens);
+            VarType ret_type = VarType::LONG;
+            string ret_type_name = "";
+            bool is_ret_nullable = false;
+            if (consume(tokens, (Token::Type)':').type != Token::NONE ||
+                consume(tokens, Token::TK_ARROW).type != Token::NONE) {
+                if (is_type_keyword(tokens[_pos].type)) {
+                    ret_type = token_to_vartype(tokens[_pos].type);
+                    _pos++;
+                } else if (tokens[_pos].type == Token::TK_ID && _class_defs.count(tokens[_pos].id)) {
+                    ret_type = VarType::CLASS;
+                    ret_type_name = tokens[_pos].id;
+                    _pos++;
+                    if (tokens[_pos].type == (Token::Type)'?') {
+                        is_ret_nullable = true;
+                        _pos++;
+                    }
+                } else if (tokens[_pos].type == Token::TK_ID && _struct_defs.count(tokens[_pos].id)) {
+                    ret_type = VarType::STRUCT;
+                    ret_type_name = tokens[_pos].id;
+                    _pos++;
+                } else {
+                    throw ParseError("expected return type after ':' or '->'", tokens[_pos]);
+                }
+            }
+            auto body = parse_block(tokens);
+
+            int existing_vtable_idx = cdef.getMethodVtableIndex(mname.id);
+            if (is_override && existing_vtable_idx < 0) {
+                throw ParseError("method '" + mname.id + "' marked override does not override any base class method", mname);
+            }
+
+            auto *minfo = new MethodInfo();
+            minfo->name = mname.id;
+            minfo->params = params_decl;
+            minfo->ret_type = ret_type;
+            minfo->ret_type_name = ret_type_name;
+            minfo->is_ret_nullable = is_ret_nullable;
+            minfo->body = body;
+            minfo->is_abstract = false;
+            minfo->is_override = is_override || (existing_vtable_idx >= 0);
+            minfo->class_name = class_name;
+
+            if (existing_vtable_idx >= 0) {
+                minfo->vtable_index = existing_vtable_idx;
+                cdef.vtable_methods[existing_vtable_idx] = minfo;
+            } else {
+                minfo->vtable_index = (int)cdef.vtable_methods.size();
+                cdef.vtable_methods.push_back(minfo);
+            }
+            cdef.methods[mname.id] = minfo;
         } else {
             throw ParseError("unexpected token in class body", tokens[_pos]);
         }

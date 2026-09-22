@@ -163,7 +163,7 @@ Dorothy provides compile-time and runtime null-safety guarantees.
 ```dorothy
 class Player {
     var name: string;
-    func Player(n: string) {
+    constructor(n: string) {
         this.name = n;
     }
 }
@@ -186,7 +186,7 @@ func main() {
 
 Dorothy provides a full class-based OOP system with Automatic Reference Counting (ARC) memory management:
 
-- **Classes & Constructors**: `class Name { ... func Name(...) { ... } }`
+- **Classes & Constructors**: `class Name { ... constructor(...) { ... } }`
 - **Inheritance & Polymorphism**: `class Dog: Animal { override func speak() { ... } }`
 - **Abstract Classes**: `abstract class Shape { abstract func area() -> int; }`
 - **Reference Semantics**: Objects are passed by reference and automatically cleaned up when references reach zero.
@@ -200,7 +200,7 @@ abstract class Animal {
 
 class Dog: Animal {
     var name: string;
-    func Dog(name: string) {
+    constructor(name: string) {
         this.name = name;
     }
 
@@ -259,7 +259,7 @@ import "stdio.h";
 
 class Player {
     var name: string;
-    func Player(n: string) {
+    constructor(n: string) {
         this.name = n;
     }
 }

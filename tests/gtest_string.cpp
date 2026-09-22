@@ -285,7 +285,7 @@ TEST(StringTest, LLVMStringClassField) {
         "class Person {\n"
         "    var name: string;\n"
         "    var age: int;\n"
-        "    func Person(n: string, a: int) {\n"
+        "    constructor(n: string, a: int) {\n"
         "        this.name = n;\n"
         "        this.age = a;\n"
         "    }\n"
