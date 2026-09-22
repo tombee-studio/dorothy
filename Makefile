@@ -39,6 +39,7 @@ test:
 			tests/gtest_null_safety.cpp \
 			tests/gtest_string.cpp \
 			tests/gtest_constants.cpp \
+			tests/gtest_array.cpp \
 			obj/*.o $(GTEST_LIBS) -o dist/test_runner
 		./dist/test_runner
 

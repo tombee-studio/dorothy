@@ -153,6 +153,209 @@ static void emit_string_runtime(LLVMGenCtx& ctx) {
             << "}\n\n";
 }
 
+static void emit_null_check_runtime(LLVMGenCtx& ctx) {
+    if (ctx.null_check_emitted) return;
+    ctx.null_check_emitted = true;
+
+    if (!ctx.c_imported_funcs.count("puts")) {
+        ctx.out << "declare i32 @puts(ptr)\n\n";
+        ctx.c_imported_funcs["puts"] = {"i32", {"ptr"}, false};
+    }
+    if (!ctx.c_imported_funcs.count("exit")) {
+        ctx.out << "declare void @exit(i32)\n\n";
+        ctx.c_imported_funcs["exit"] = {"void", {"i32"}, false};
+    }
+
+    ctx.out << "@.str.npe = private unnamed_addr constant [57 x i8] c\"NullPointerException: Attempted to access null reference\\00\", align 1\n\n";
+
+    ctx.out << "define void @_dorothy_check_null(ptr %obj) {\n"
+            << "entry:\n"
+            << "  %is_null = icmp eq ptr %obj, null\n"
+            << "  br i1 %is_null, label %npe, label %ok\n"
+            << "npe:\n"
+            << "  %msg = getelementptr [57 x i8], ptr @.str.npe, i32 0, i32 0\n"
+            << "  call i32 @puts(ptr %msg)\n"
+            << "  call void @exit(i32 1)\n"
+            << "  unreachable\n"
+            << "ok:\n"
+            << "  ret void\n"
+            << "}\n\n";
+}
+
+static void emit_array_runtime(LLVMGenCtx& ctx) {
+    if (ctx.array_runtime_emitted) return;
+    ctx.array_runtime_emitted = true;
+
+    emit_null_check_runtime(ctx);
+
+    if (!ctx.c_imported_funcs.count("malloc")) {
+        ctx.out << "declare ptr @malloc(i64)\n\n";
+        ctx.c_imported_funcs["malloc"] = {"ptr", {"i64"}, false};
+    }
+    if (!ctx.c_imported_funcs.count("free")) {
+        ctx.out << "declare void @free(ptr)\n\n";
+        ctx.c_imported_funcs["free"] = {"void", {"ptr"}, false};
+    }
+    if (!ctx.c_imported_funcs.count("realloc")) {
+        ctx.out << "declare ptr @realloc(ptr, i64)\n\n";
+        ctx.c_imported_funcs["realloc"] = {"ptr", {"ptr", "i64"}, false};
+    }
+    if (!ctx.c_imported_funcs.count("exit")) {
+        ctx.out << "declare void @exit(i32)\n\n";
+        ctx.c_imported_funcs["exit"] = {"void", {"i32"}, false};
+    }
+    if (!ctx.c_imported_funcs.count("printf")) {
+        ctx.out << "declare i32 @printf(ptr, ...)\n\n";
+        ctx.c_imported_funcs["printf"] = {"i32", {"ptr"}, true};
+    }
+
+    ctx.out << "%struct._dorothy_array = type { ptr, i64, i64 }\n\n";
+
+    ctx.out << "@.str.bounds_err = private unnamed_addr constant [38 x i8] c\"IndexOutOfBoundsException: index %ld\\0A\\00\", align 1\n\n";
+
+    ctx.out << "define void @_dorothy_panic_bounds(i64 %idx) {\n"
+            << "entry:\n"
+            << "  %p = call i32 (ptr, ...) @printf(ptr @.str.bounds_err, i64 %idx)\n"
+            << "  call void @exit(i32 1)\n"
+            << "  unreachable\n"
+            << "}\n\n";
+
+    ctx.out << "define ptr @_dorothy_array_new(i64 %cap) {\n"
+            << "entry:\n"
+            << "  %arr = call ptr @malloc(i64 24)\n"
+            << "  %c_zero = icmp sle i64 %cap, 0\n"
+            << "  %real_cap = select i1 %c_zero, i64 4, i64 %cap\n"
+            << "  %bytes = mul i64 %real_cap, 8\n"
+            << "  %buf = call ptr @malloc(i64 %bytes)\n"
+            << "  %data_ptr = getelementptr %struct._dorothy_array, ptr %arr, i32 0, i32 0\n"
+            << "  store ptr %buf, ptr %data_ptr\n"
+            << "  %size_ptr = getelementptr %struct._dorothy_array, ptr %arr, i32 0, i32 1\n"
+            << "  store i64 0, ptr %size_ptr\n"
+            << "  %cap_ptr = getelementptr %struct._dorothy_array, ptr %arr, i32 0, i32 2\n"
+            << "  store i64 %real_cap, ptr %cap_ptr\n"
+            << "  ret ptr %arr\n"
+            << "}\n\n";
+
+    ctx.out << "define void @_dorothy_array_push(ptr %arr, i64 %val) {\n"
+            << "entry:\n"
+            << "  call void @_dorothy_check_null(ptr %arr)\n"
+            << "  %size_ptr = getelementptr %struct._dorothy_array, ptr %arr, i32 0, i32 1\n"
+            << "  %size = load i64, ptr %size_ptr\n"
+            << "  %cap_ptr = getelementptr %struct._dorothy_array, ptr %arr, i32 0, i32 2\n"
+            << "  %cap = load i64, ptr %cap_ptr\n"
+            << "  %full = icmp sge i64 %size, %cap\n"
+            << "  br i1 %full, label %grow, label %store\n"
+            << "grow:\n"
+            << "  %new_cap = mul i64 %cap, 2\n"
+            << "  store i64 %new_cap, ptr %cap_ptr\n"
+            << "  %new_bytes = mul i64 %new_cap, 8\n"
+            << "  %data_ptr = getelementptr %struct._dorothy_array, ptr %arr, i32 0, i32 0\n"
+            << "  %old_buf = load ptr, ptr %data_ptr\n"
+            << "  %new_buf = call ptr @realloc(ptr %old_buf, i64 %new_bytes)\n"
+            << "  store ptr %new_buf, ptr %data_ptr\n"
+            << "  br label %store\n"
+            << "store:\n"
+            << "  %data_ptr2 = getelementptr %struct._dorothy_array, ptr %arr, i32 0, i32 0\n"
+            << "  %buf2 = load ptr, ptr %data_ptr2\n"
+            << "  %slot = getelementptr i64, ptr %buf2, i64 %size\n"
+            << "  store i64 %val, ptr %slot\n"
+            << "  %new_size = add i64 %size, 1\n"
+            << "  store i64 %new_size, ptr %size_ptr\n"
+            << "  ret void\n"
+            << "}\n\n";
+
+    ctx.out << "define i64 @_dorothy_array_size(ptr %arr) {\n"
+            << "entry:\n"
+            << "  call void @_dorothy_check_null(ptr %arr)\n"
+            << "  %size_ptr = getelementptr %struct._dorothy_array, ptr %arr, i32 0, i32 1\n"
+            << "  %size = load i64, ptr %size_ptr\n"
+            << "  ret i64 %size\n"
+            << "}\n\n";
+
+    ctx.out << "define i64 @_dorothy_array_get(ptr %arr, i64 %idx) {\n"
+            << "entry:\n"
+            << "  call void @_dorothy_check_null(ptr %arr)\n"
+            << "  %size_ptr = getelementptr %struct._dorothy_array, ptr %arr, i32 0, i32 1\n"
+            << "  %size = load i64, ptr %size_ptr\n"
+            << "  %neg = icmp slt i64 %idx, 0\n"
+            << "  %oob = icmp sge i64 %idx, %size\n"
+            << "  %bad = or i1 %neg, %oob\n"
+            << "  br i1 %bad, label %err, label %ok\n"
+            << "err:\n"
+            << "  call void @_dorothy_panic_bounds(i64 %idx)\n"
+            << "  unreachable\n"
+            << "ok:\n"
+            << "  %data_ptr = getelementptr %struct._dorothy_array, ptr %arr, i32 0, i32 0\n"
+            << "  %buf = load ptr, ptr %data_ptr\n"
+            << "  %slot = getelementptr i64, ptr %buf, i64 %idx\n"
+            << "  %val = load i64, ptr %slot\n"
+            << "  ret i64 %val\n"
+            << "}\n\n";
+
+    ctx.out << "define void @_dorothy_array_set(ptr %arr, i64 %idx, i64 %val) {\n"
+            << "entry:\n"
+            << "  call void @_dorothy_check_null(ptr %arr)\n"
+            << "  %size_ptr = getelementptr %struct._dorothy_array, ptr %arr, i32 0, i32 1\n"
+            << "  %size = load i64, ptr %size_ptr\n"
+            << "  %neg = icmp slt i64 %idx, 0\n"
+            << "  %oob = icmp sge i64 %idx, %size\n"
+            << "  %bad = or i1 %neg, %oob\n"
+            << "  br i1 %bad, label %err, label %ok\n"
+            << "err:\n"
+            << "  call void @_dorothy_panic_bounds(i64 %idx)\n"
+            << "  unreachable\n"
+            << "ok:\n"
+            << "  %data_ptr = getelementptr %struct._dorothy_array, ptr %arr, i32 0, i32 0\n"
+            << "  %buf = load ptr, ptr %data_ptr\n"
+            << "  %slot = getelementptr i64, ptr %buf, i64 %idx\n"
+            << "  store i64 %val, ptr %slot\n"
+            << "  ret void\n"
+            << "}\n\n";
+
+    ctx.out << "define i64 @_dorothy_array_remove(ptr %arr, i64 %val) {\n"
+            << "entry:\n"
+            << "  call void @_dorothy_check_null(ptr %arr)\n"
+            << "  %size_ptr = getelementptr %struct._dorothy_array, ptr %arr, i32 0, i32 1\n"
+            << "  %size = load i64, ptr %size_ptr\n"
+            << "  br label %loop_cond\n"
+            << "loop_cond:\n"
+            << "  %i = phi i64 [ 0, %entry ], [ %next_i, %loop_step ]\n"
+            << "  %has_more = icmp slt i64 %i, %size\n"
+            << "  br i1 %has_more, label %loop_body, label %not_found\n"
+            << "loop_body:\n"
+            << "  %data_ptr = getelementptr %struct._dorothy_array, ptr %arr, i32 0, i32 0\n"
+            << "  %buf = load ptr, ptr %data_ptr\n"
+            << "  %slot = getelementptr i64, ptr %buf, i64 %i\n"
+            << "  %cur_val = load i64, ptr %slot\n"
+            << "  %match = icmp eq i64 %cur_val, %val\n"
+            << "  br i1 %match, label %found, label %loop_step\n"
+            << "loop_step:\n"
+            << "  %next_i = add i64 %i, 1\n"
+            << "  br label %loop_cond\n"
+            << "found:\n"
+            << "  %shift_start = add i64 %i, 1\n"
+            << "  br label %shift_cond\n"
+            << "shift_cond:\n"
+            << "  %si = phi i64 [ %shift_start, %found ], [ %next_si, %shift_body ]\n"
+            << "  %shift_more = icmp slt i64 %si, %size\n"
+            << "  br i1 %shift_more, label %shift_body, label %done_shift\n"
+            << "shift_body:\n"
+            << "  %src_slot = getelementptr i64, ptr %buf, i64 %si\n"
+            << "  %elem = load i64, ptr %src_slot\n"
+            << "  %prev_si = sub i64 %si, 1\n"
+            << "  %dst_slot = getelementptr i64, ptr %buf, i64 %prev_si\n"
+            << "  store i64 %elem, ptr %dst_slot\n"
+            << "  %next_si = add i64 %si, 1\n"
+            << "  br label %shift_cond\n"
+            << "done_shift:\n"
+            << "  %new_size = sub i64 %size, 1\n"
+            << "  store i64 %new_size, ptr %size_ptr\n"
+            << "  ret i64 1\n"
+            << "not_found:\n"
+            << "  ret i64 0\n"
+            << "}\n\n";
+}
+
 // Strip ANSI escape codes from a string.
 static string strip_ansi(const string& s) {
     string out;
@@ -572,6 +775,17 @@ static string resolve_expr_class_name(LLVMGenCtx& ctx, Expression* expr) {
     if (ci) {
         return ci->getClassName();
     }
+    auto* ai = dynamic_cast<ArrayIndex*>(expr);
+    if (ai && ai->getPointer()) {
+        const string& vname = ai->getPointer()->getVarName();
+        auto it = ctx.array_var_typeinfo.find(vname);
+        if (it != ctx.array_var_typeinfo.end()) {
+            TypeInfo elem_ti = it->second.get_element_type();
+            if (elem_ti.base_type == VarType::CLASS || !elem_ti.type_name.empty()) {
+                return elem_ti.type_name;
+            }
+        }
+    }
     return "";
 }
 
@@ -730,6 +944,7 @@ static void emit_all_classes(LLVMGenCtx& ctx) {
     ctx.classes_emitted = true;
 
     emit_string_runtime(ctx);
+    emit_array_runtime(ctx);
 
     for (const auto& pair : g_class_defs) {
         const auto& cdef = pair.second;
@@ -743,6 +958,8 @@ static void emit_all_classes(LLVMGenCtx& ctx) {
             if (mp.second && mp.second->body) mp.second->body->collect_strings(ctx);
         }
     }
+
+    emit_null_check_runtime(ctx);
 
     if (!g_class_defs.empty()) {
         // Declare malloc, free, puts, exit if not already declared by C header
@@ -762,21 +979,6 @@ static void emit_all_classes(LLVMGenCtx& ctx) {
             ctx.out << "declare void @exit(i32)\n\n";
             ctx.c_imported_funcs["exit"] = {"void", {"i32"}, false};
         }
-
-        ctx.out << "@.str.npe = private unnamed_addr constant [57 x i8] c\"NullPointerException: Attempted to access null reference\\00\", align 1\n\n";
-
-        ctx.out << "define void @_dorothy_check_null(ptr %obj) {\n"
-                << "entry:\n"
-                << "  %is_null = icmp eq ptr %obj, null\n"
-                << "  br i1 %is_null, label %npe, label %ok\n"
-                << "npe:\n"
-                << "  %msg = getelementptr [57 x i8], ptr @.str.npe, i32 0, i32 0\n"
-                << "  call i32 @puts(ptr %msg)\n"
-                << "  call void @exit(i32 1)\n"
-                << "  unreachable\n"
-                << "ok:\n"
-                << "  ret void\n"
-                << "}\n\n";
 
         // Emit ARC helper functions
         ctx.out << "define void @_dorothy_retain(ptr %obj) {\n"
@@ -898,6 +1100,17 @@ void DeclVar::llvm_emit(LLVMGenCtx& ctx) {
         if (_is_const) ctx.const_vars.insert(_id);
         return;
     }
+    if (_type == VarType::ARRAY) {
+        int n = ctx.counter++;
+        string ptr = "%" + _id + ".addr." + to_string(n);
+        ctx.out << "  " << ptr << " = alloca ptr\n";
+        ctx.out << "  store ptr null, ptr " << ptr << "\n";
+        ctx.vars[_id] = ptr;
+        ctx.var_types[_id] = VarType::ARRAY;
+        ctx.array_var_typeinfo[_id] = _type_info;
+        if (_is_const) ctx.const_vars.insert(_id);
+        return;
+    }
     if (_type == VarType::STRUCT) {
         if (!g_struct_defs.count(_struct_name))
             throw CompileError(("undefined struct type: " + _struct_name).c_str());
@@ -931,6 +1144,9 @@ void InitializedDeclVar::llvm_emit(LLVMGenCtx& ctx) {
             _struct_name = ci->getClassName();
         } else if (dynamic_cast<StringExp*>(_init)) {
             _type = VarType::STRING;
+        } else if (dynamic_cast<ArrayLiteralExp*>(_init)) {
+            _type = VarType::ARRAY;
+            _struct_name = "Array<long>";
         } else if (auto* cfe = dynamic_cast<CallFuncExp*>(_init)) {
             if (ctx.func_return_struct.count(cfe->getId())) {
                 _type = VarType::STRUCT;
@@ -969,6 +1185,14 @@ void InitializedDeclVar::llvm_emit(LLVMGenCtx& ctx) {
     if (_type == VarType::STRING) {
         string val = _init->llvm_rval(ctx);
         string ptr_val = ctx.fresh("init.str");
+        ctx.out << "  " << ptr_val << " = inttoptr i64 " << val << " to ptr\n";
+        ctx.out << "  store ptr " << ptr_val << ", ptr " << ctx.vars[_id] << "\n";
+        return;
+    }
+
+    if (_type == VarType::ARRAY) {
+        string val = _init->llvm_rval(ctx);
+        string ptr_val = ctx.fresh("init.arr");
         ctx.out << "  " << ptr_val << " = inttoptr i64 " << val << " to ptr\n";
         ctx.out << "  store ptr " << ptr_val << ", ptr " << ctx.vars[_id] << "\n";
         return;
@@ -1560,6 +1784,26 @@ string Assign::llvm_rval(LLVMGenCtx& ctx) {
     const string& varname = _leftside->getVarName();
     if (!varname.empty() && ctx.const_vars.count(varname))
         throw CompileError(("cannot assign to constant: " + varname).c_str());
+
+    auto* ai = dynamic_cast<ArrayIndex*>(_leftside);
+    if (ai) {
+        const string& vname = ai->getVarName();
+        if (ctx.var_types.count(vname) && ctx.var_types[vname] == VarType::ARRAY) {
+            string loaded_arr = ctx.fresh("arr.load");
+            ctx.out << "  " << loaded_arr << " = load ptr, ptr " << ctx.vars[vname] << "\n";
+            string idx = ai->getIndex()->llvm_rval(ctx);
+            string val = _expr->llvm_rval(ctx);
+            VarType et = _expr->llvm_etype(ctx);
+            string val_i64 = val;
+            if (et == VarType::DOUBLE || et == VarType::FLOAT) {
+                val_i64 = ctx.fresh("set.bitcast");
+                ctx.out << "  " << val_i64 << " = bitcast double " << val << " to i64\n";
+            }
+            ctx.out << "  call void @_dorothy_array_set(ptr " << loaded_arr << ", i64 " << idx << ", i64 " << val_i64 << ")\n";
+            return val;
+        }
+    }
+
     string ptr = _leftside->llvm_lval(ctx);
     string val = _expr->llvm_rval(ctx);  // in canonical form
     VarType tgt_declared = _leftside->llvm_declared_type(ctx);
@@ -1581,8 +1825,8 @@ string Assign::llvm_rval(LLVMGenCtx& ctx) {
         ctx.out << "  call void @_dorothy_release(ptr " << old_val << ")\n";
         return val;
     }
-    if (tgt_declared == VarType::STRING) {
-        string ptr_val = ctx.fresh("assign.str");
+    if (tgt_declared == VarType::STRING || tgt_declared == VarType::ARRAY) {
+        string ptr_val = ctx.fresh(tgt_declared == VarType::ARRAY ? "assign.arr" : "assign.str");
         ctx.out << "  " << ptr_val << " = inttoptr i64 " << val << " to ptr\n";
         ctx.out << "  store ptr " << ptr_val << ", ptr " << ptr << "\n";
         return val;
@@ -1720,6 +1964,17 @@ static VarType member_field_type(LLVMGenCtx& ctx, const string& varname,
 }
 
 string MemberAccess::llvm_rval(LLVMGenCtx& ctx) {
+    auto* var_expr_check = dynamic_cast<Variable*>(_object);
+    if (var_expr_check && ctx.var_types.count(var_expr_check->getVarName()) && ctx.var_types[var_expr_check->getVarName()] == VarType::ARRAY) {
+        if (_member == "length" || _member == "size") {
+            string loaded = ctx.fresh("arr.ptr");
+            ctx.out << "  " << loaded << " = load ptr, ptr " << ctx.vars[var_expr_check->getVarName()] << "\n";
+            string res = ctx.fresh("arr.len");
+            ctx.out << "  " << res << " = call i64 @_dorothy_array_size(ptr " << loaded << ")\n";
+            return res;
+        }
+    }
+
     string cname = resolve_expr_class_name(ctx, _object);
     if (!cname.empty() && g_class_defs.count(cname)) {
         string obj_ptr;
@@ -1811,6 +2066,12 @@ string MemberAccess::llvm_lval(LLVMGenCtx& ctx) {
 }
 
 VarType MemberAccess::llvm_declared_type(LLVMGenCtx& ctx) const {
+    string obj_var = _object->getVarName();
+    if (!obj_var.empty() && ctx.var_types.count(obj_var) && ctx.var_types[obj_var] == VarType::ARRAY) {
+        if (_member == "length" || _member == "size") {
+            return VarType::LONG;
+        }
+    }
     string cname = resolve_expr_class_name(ctx, _object);
     if (!cname.empty() && g_class_defs.count(cname)) {
         int idx = g_class_defs[cname].fieldIndex(_member);
@@ -1898,6 +2159,9 @@ string Variable::llvm_lval(LLVMGenCtx& ctx) {
 
 VarType ArrayIndex::llvm_declared_type(LLVMGenCtx& ctx) const {
     const string& varname = _pointer->getVarName();
+    if (ctx.array_var_typeinfo.count(varname)) {
+        return ctx.array_var_typeinfo[varname].get_element_type().base_type;
+    }
     auto it = ctx.array_elem_types.find(varname);
     if (it != ctx.array_elem_types.end()) {
         return it->second;
@@ -1910,9 +2174,24 @@ VarType ArrayIndex::llvm_etype(LLVMGenCtx& ctx) const {
 }
 
 string ArrayIndex::llvm_rval(LLVMGenCtx& ctx) {
+    const string& varname = _pointer->getVarName();
+    if (ctx.var_types.count(varname) && ctx.var_types[varname] == VarType::ARRAY) {
+        string loaded_arr = ctx.fresh("arr.load");
+        ctx.out << "  " << loaded_arr << " = load ptr, ptr " << ctx.vars[varname] << "\n";
+        string idx = _index->llvm_rval(ctx);
+        string raw_val = ctx.fresh("arr.get");
+        ctx.out << "  " << raw_val << " = call i64 @_dorothy_array_get(ptr " << loaded_arr << ", i64 " << idx << ")\n";
+        VarType elem_type = llvm_declared_type(ctx);
+        if (elem_type == VarType::DOUBLE || elem_type == VarType::FLOAT) {
+            string dbl_reg = ctx.fresh("get.dbl");
+            ctx.out << "  " << dbl_reg << " = bitcast i64 " << raw_val << " to double\n";
+            return dbl_reg;
+        }
+        return raw_val;
+    }
+
     VarType elem_type = llvm_declared_type(ctx);
     string tstr = llvm_type_str(elem_type);
-    const string& varname = _pointer->getVarName();
     string arr_ptr;
     auto it = ctx.array_data_ptrs.find(varname);
     if (it != ctx.array_data_ptrs.end()) {
@@ -2103,9 +2382,86 @@ string ClassInit::llvm_rval(LLVMGenCtx& ctx) {
     return ret_i64;
 }
 
+// ===== ArrayLiteralExp =====
+
+string ArrayLiteralExp::llvm_rval(LLVMGenCtx& ctx) {
+    int count = (int)_elements.size();
+    int cap = count > 4 ? count : 4;
+    string arr_reg = ctx.fresh("arr.inst");
+    ctx.out << "  " << arr_reg << " = call ptr @_dorothy_array_new(i64 " << cap << ")\n";
+    for (int i = 0; i < count; i++) {
+        string elem_rval = _elements[i]->llvm_rval(ctx);
+        VarType et = _elements[i]->llvm_etype(ctx);
+        string val_i64 = elem_rval;
+        if (et == VarType::DOUBLE || et == VarType::FLOAT) {
+            val_i64 = ctx.fresh("elem.bitcast");
+            ctx.out << "  " << val_i64 << " = bitcast double " << elem_rval << " to i64\n";
+        }
+        ctx.out << "  call void @_dorothy_array_push(ptr " << arr_reg << ", i64 " << val_i64 << ")\n";
+    }
+    string ret_i64 = ctx.fresh("arr.i64");
+    ctx.out << "  " << ret_i64 << " = ptrtoint ptr " << arr_reg << " to i64\n";
+    return ret_i64;
+}
+
 // ===== CallMethodExp =====
 
 string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
+    auto* var_expr_check = dynamic_cast<Variable*>(_object);
+    bool is_arr = false;
+    if (var_expr_check && ctx.var_types.count(var_expr_check->getVarName()) && ctx.var_types[var_expr_check->getVarName()] == VarType::ARRAY) {
+        is_arr = true;
+    }
+    if (_object->llvm_declared_type(ctx) == VarType::ARRAY) {
+        is_arr = true;
+    }
+
+    if (is_arr) {
+        string obj_ptr;
+        if (var_expr_check && ctx.vars.count(var_expr_check->getVarName())) {
+            string loaded_ptr = ctx.fresh("arr.obj");
+            ctx.out << "  " << loaded_ptr << " = load ptr, ptr " << ctx.vars[var_expr_check->getVarName()] << "\n";
+            obj_ptr = loaded_ptr;
+        } else {
+            string obj_i64 = _object->llvm_rval(ctx);
+            obj_ptr = ctx.fresh("arr.obj");
+            ctx.out << "  " << obj_ptr << " = inttoptr i64 " << obj_i64 << " to ptr\n";
+        }
+        ctx.out << "  call void @_dorothy_check_null(ptr " << obj_ptr << ")\n";
+
+        if (_method_name == "push") {
+            if (_args.empty()) throw CompileError("arr.push() requires an argument");
+            string val = _args[0]->llvm_rval(ctx);
+            VarType et = _args[0]->llvm_etype(ctx);
+            string val_i64 = val;
+            if (et == VarType::DOUBLE || et == VarType::FLOAT) {
+                val_i64 = ctx.fresh("push.bitcast");
+                ctx.out << "  " << val_i64 << " = bitcast double " << val << " to i64\n";
+            }
+            ctx.out << "  call void @_dorothy_array_push(ptr " << obj_ptr << ", i64 " << val_i64 << ")\n";
+            return "0";
+        }
+        if (_method_name == "remove") {
+            if (_args.empty()) throw CompileError("arr.remove() requires an argument");
+            string val = _args[0]->llvm_rval(ctx);
+            VarType et = _args[0]->llvm_etype(ctx);
+            string val_i64 = val;
+            if (et == VarType::DOUBLE || et == VarType::FLOAT) {
+                val_i64 = ctx.fresh("remove.bitcast");
+                ctx.out << "  " << val_i64 << " = bitcast double " << val << " to i64\n";
+            }
+            string res = ctx.fresh("arr.rm_res");
+            ctx.out << "  " << res << " = call i64 @_dorothy_array_remove(ptr " << obj_ptr << ", i64 " << val_i64 << ")\n";
+            return res;
+        }
+        if (_method_name == "size" || _method_name == "length") {
+            string res = ctx.fresh("arr.len");
+            ctx.out << "  " << res << " = call i64 @_dorothy_array_size(ptr " << obj_ptr << ")\n";
+            return res;
+        }
+        throw CompileError(("unknown array method: " + _method_name).c_str());
+    }
+
     string obj_ptr;
     string cname = resolve_expr_class_name(ctx, _object);
 

@@ -563,23 +563,19 @@ Function *Parser::parse_function(vector<Token> &tokens) {
     if (consume(tokens, (Token::Type)':').type != Token::NONE ||
         consume(tokens, Token::TK_ARROW).type != Token::NONE) {
         has_explicit_ret_type = true;
-        if (is_type_keyword(tokens[_pos].type)) {
-            ret_type = token_to_vartype(tokens[_pos].type);
-            _pos++;
-        } else if (tokens[_pos].type == Token::TK_ID && _class_defs.count(tokens[_pos].id)) {
-            ret_type = VarType::CLASS;
-            ret_struct_name = tokens[_pos].id;
-            _pos++;
-            if (tokens[_pos].type == (Token::Type)'?') {
-                is_ret_nullable = true;
-                _pos++;
-            }
-        } else if (tokens[_pos].type == Token::TK_ID && _struct_defs.count(tokens[_pos].id)) {
-            ret_type = VarType::STRUCT;
-            ret_struct_name = tokens[_pos].id;
-            _pos++;
-        } else {
-            throw ParseError("expected type after ':' or '->'", tokens[_pos]);
+        TypeInfo ret_ti = parse_type(tokens);
+        ret_type = ret_ti.base_type;
+        is_ret_nullable = ret_ti.is_nullable;
+        if (ret_ti.is_array()) {
+            ret_type = VarType::ARRAY;
+            string elem_name = ret_ti.get_element_type().type_name.empty() ?
+                (ret_ti.get_element_type().base_type == VarType::STRING ? "string" :
+                 ret_ti.get_element_type().base_type == VarType::INT ? "int" :
+                 ret_ti.get_element_type().base_type == VarType::DOUBLE ? "double" : "long")
+                : ret_ti.get_element_type().type_name;
+            ret_struct_name = "Array<" + elem_name + ">";
+        } else if (ret_type == VarType::CLASS || ret_type == VarType::STRUCT) {
+            ret_struct_name = ret_ti.type_name;
         }
     }
     auto block = parse_block(tokens);
@@ -618,26 +614,24 @@ DeclVar *Parser::parse_declparam(vector<Token> &tokens) {
         throw ParseError(format("expected parameter name at %d", _pos), tokens[_pos]);
     if (consume(tokens, (Token::Type)':').type == Token::NONE)
         throw ParseError("expected ':' after parameter name", tokens[_pos]);
-    if (tokens[_pos].type == Token::TK_ID && _class_defs.count(tokens[_pos].id)) {
-        string class_name = tokens[_pos].id;
-        _pos++;
-        bool is_nullable = false;
-        if (tokens[_pos].type == (Token::Type)'?') {
-            is_nullable = true;
-            _pos++;
-        }
-        return new DeclVar(id_token.id, VarType::CLASS, is_const, class_name, is_nullable);
+
+    TypeInfo ti = parse_type(tokens);
+    if (ti.is_array()) {
+        string elem_name = ti.get_element_type().type_name.empty() ?
+            (ti.get_element_type().base_type == VarType::STRING ? "string" :
+             ti.get_element_type().base_type == VarType::INT ? "int" :
+             ti.get_element_type().base_type == VarType::DOUBLE ? "double" : "long")
+            : ti.get_element_type().type_name;
+        string arr_type_name = "Array<" + elem_name + ">";
+        return new DeclVar(id_token.id, VarType::ARRAY, is_const, arr_type_name, ti.is_nullable, ti);
     }
-    if (tokens[_pos].type == Token::TK_ID && _struct_defs.count(tokens[_pos].id)) {
-        string struct_name = tokens[_pos].id;
-        _pos++;
-        return new DeclVar(id_token.id, VarType::STRUCT, is_const, struct_name);
+    if (ti.base_type == VarType::CLASS) {
+        return new DeclVar(id_token.id, VarType::CLASS, is_const, ti.type_name, ti.is_nullable, ti);
     }
-    if (!is_type_keyword(tokens[_pos].type))
-        throw ParseError("expected type keyword after ':'", tokens[_pos]);
-    VarType vtype = token_to_vartype(tokens[_pos].type);
-    _pos++;
-    return new DeclVar(id_token.id, vtype, is_const);
+    if (ti.base_type == VarType::STRUCT) {
+        return new DeclVar(id_token.id, VarType::STRUCT, is_const, ti.type_name, false, ti);
+    }
+    return new DeclVar(id_token.id, ti.base_type, is_const, "", false, ti);
 }
 
 DeclVar *Parser::parse_declvar(vector<Token> &tokens) {
@@ -760,6 +754,16 @@ Statement *Parser::parse_declvarst(vector<Token> &tokens) {
                 id_token.id, VarType::STRUCT, is_const, init, si->getStructName()));
         }
 
+        auto* ale = dynamic_cast<ArrayLiteralExp*>(init);
+        if (ale) {
+            TypeInfo ti;
+            ti.base_type = VarType::ARRAY;
+            ti.type_name = "Array";
+            ti.generic_args.push_back({VarType::LONG, "", false, {}});
+            return new DeclVarSt(new InitializedDeclVar(
+                id_token.id, VarType::ARRAY, is_const, init, "Array<long>", false, ti));
+        }
+
         // All other expressions: defer type resolution to llvm_emit via INFERRED
         return new DeclVarSt(
             new InitializedDeclVar(id_token.id, VarType::INFERRED, is_const, init));
@@ -769,60 +773,14 @@ Statement *Parser::parse_declvarst(vector<Token> &tokens) {
     if (consume(tokens, (Token::Type)':').type == Token::NONE)
         throw ParseError("expected ':' or '=' after variable name", tokens[_pos]);
 
-    // Class type: var name: ClassName [?] [= expr];
-    if (tokens[_pos].type == Token::TK_ID && _class_defs.count(tokens[_pos].id)) {
-        string class_name = tokens[_pos].id;
-        _pos++;
-        bool is_nullable = false;
-        if (tokens[_pos].type == (Token::Type)'?') {
-            is_nullable = true;
-            _pos++;
-        }
-        if (consume(tokens, (Token::Type)'=').type != Token::NONE) {
-            auto init = parse_expression(tokens);
-            if (!init) throw ParseError("expected class initializer expression", tokens[_pos]);
-            if (consume(tokens, (Token::Type)';').type == Token::NONE)
-                throw ParseError("expected ';'", tokens[_pos]);
-            if (!is_nullable && dynamic_cast<NullExp*>(init)) {
-                throw ParseError("cannot assign null to non-nullable variable '" + id_token.id + "' of type '" + class_name + "'", id_token);
-            }
-            return new DeclVarSt(
-                new InitializedDeclVar(id_token.id, VarType::CLASS, is_const, init, class_name, is_nullable));
-        }
-        if (is_const)
-            throw ParseError("'let' class variable requires an initializer", tokens[_pos]);
-        if (consume(tokens, (Token::Type)';').type == Token::NONE)
-            throw ParseError("expected ';'", tokens[_pos]);
-        if (!is_nullable) {
-            throw ParseError("non-nullable variable '" + id_token.id + "' of type '" + class_name + "' must be initialized", id_token);
-        }
-        return new DeclVarSt(new InitializedDeclVar(id_token.id, VarType::CLASS, false, new NullExp(), class_name, true));
-    }
-
-    // Struct type: var name: StructName = StructName(field=val, ...);
-    if (tokens[_pos].type == Token::TK_ID && _struct_defs.count(tokens[_pos].id)) {
-        string struct_name = tokens[_pos].id;
-        _pos++;
-        if (consume(tokens, (Token::Type)'=').type == Token::NONE)
-            throw ParseError("struct variable requires an initializer", tokens[_pos]);
-        auto init = parse_expression(tokens);
-        if (!init) throw ParseError("expected struct initializer expression", tokens[_pos]);
-        if (consume(tokens, (Token::Type)';').type == Token::NONE)
-            throw ParseError("expected ';'", tokens[_pos]);
-        return new DeclVarSt(
-            new InitializedDeclVar(id_token.id, VarType::STRUCT, is_const, init, struct_name));
-    }
-
-    if (!is_type_keyword(tokens[_pos].type))
-        throw ParseError("expected type keyword or type name after ':'", tokens[_pos]);
-    VarType vtype = token_to_vartype(tokens[_pos].type);
-    _pos++;
-
-    // Array: var name: type[N] [= {vals}];
-    if (consume(tokens, (Token::Type)'[').type != Token::NONE) {
+    // Fixed-size Array: var name: type[N] [= {vals}]; (check if next is type followed by '[' INT ']')
+    if (is_type_keyword(tokens[_pos].type) &&
+        _pos + 2 < (int)tokens.size() &&
+        tokens[_pos + 1].type == (Token::Type)'[' &&
+        tokens[_pos + 2].type == Token::TK_INT) {
+        VarType vtype = token_to_vartype(tokens[_pos].type);
+        _pos += 2; // consume type and '['
         Token num_token = consume(tokens, Token::TK_INT);
-        if (num_token.type == Token::NONE)
-            throw ParseError("expected array size", tokens[_pos]);
         if (consume(tokens, (Token::Type)']').type == Token::NONE)
             throw ParseError("expected ']'", tokens[_pos]);
         if (consume(tokens, (Token::Type)'=').type != Token::NONE) {
@@ -839,6 +797,78 @@ Statement *Parser::parse_declvarst(vector<Token> &tokens) {
         return new DeclVarSt(new DeclArrayVar(id_token.id, num_token.int_val, vtype));
     }
 
+    TypeInfo ti = parse_type(tokens);
+
+    // Dynamic Array type: var name: Array<T> / T[] [= expr];
+    if (ti.is_array()) {
+        string elem_name = ti.get_element_type().type_name.empty() ?
+            (ti.get_element_type().base_type == VarType::STRING ? "string" :
+             ti.get_element_type().base_type == VarType::INT ? "int" :
+             ti.get_element_type().base_type == VarType::DOUBLE ? "double" : "long")
+            : ti.get_element_type().type_name;
+        string arr_name = "Array<" + elem_name + ">";
+
+        if (consume(tokens, (Token::Type)'=').type != Token::NONE) {
+            auto init = parse_expression(tokens);
+            if (!init) throw ParseError("expected array initializer expression", tokens[_pos]);
+            if (consume(tokens, (Token::Type)';').type == Token::NONE)
+                throw ParseError("expected ';'", tokens[_pos]);
+            if (!ti.is_nullable && dynamic_cast<NullExp*>(init)) {
+                throw ParseError("cannot assign null to non-nullable array '" + id_token.id + "'", id_token);
+            }
+            return new DeclVarSt(
+                new InitializedDeclVar(id_token.id, VarType::ARRAY, is_const, init, arr_name, ti.is_nullable, ti));
+        }
+        if (is_const)
+            throw ParseError("'let' array variable requires an initializer", tokens[_pos]);
+        if (consume(tokens, (Token::Type)';').type == Token::NONE)
+            throw ParseError("expected ';'", tokens[_pos]);
+        if (ti.is_nullable) {
+            return new DeclVarSt(new InitializedDeclVar(id_token.id, VarType::ARRAY, false, new NullExp(), arr_name, true, ti));
+        }
+        return new DeclVarSt(new InitializedDeclVar(id_token.id, VarType::ARRAY, false, new ArrayLiteralExp({}), arr_name, false, ti));
+    }
+
+    // Class type: var name: ClassName [?] [= expr];
+    if (ti.base_type == VarType::CLASS) {
+        string class_name = ti.type_name;
+        bool is_nullable = ti.is_nullable;
+        if (consume(tokens, (Token::Type)'=').type != Token::NONE) {
+            auto init = parse_expression(tokens);
+            if (!init) throw ParseError("expected class initializer expression", tokens[_pos]);
+            if (consume(tokens, (Token::Type)';').type == Token::NONE)
+                throw ParseError("expected ';'", tokens[_pos]);
+            if (!is_nullable && dynamic_cast<NullExp*>(init)) {
+                throw ParseError("cannot assign null to non-nullable variable '" + id_token.id + "' of type '" + class_name + "'", id_token);
+            }
+            return new DeclVarSt(
+                new InitializedDeclVar(id_token.id, VarType::CLASS, is_const, init, class_name, is_nullable, ti));
+        }
+        if (is_const)
+            throw ParseError("'let' class variable requires an initializer", tokens[_pos]);
+        if (consume(tokens, (Token::Type)';').type == Token::NONE)
+            throw ParseError("expected ';'", tokens[_pos]);
+        if (!is_nullable) {
+            throw ParseError("non-nullable variable '" + id_token.id + "' of type '" + class_name + "' must be initialized", id_token);
+        }
+        return new DeclVarSt(new InitializedDeclVar(id_token.id, VarType::CLASS, false, new NullExp(), class_name, true, ti));
+    }
+
+    // Struct type: var name: StructName = StructName(field=val, ...);
+    if (ti.base_type == VarType::STRUCT) {
+        string struct_name = ti.type_name;
+        if (consume(tokens, (Token::Type)'=').type == Token::NONE)
+            throw ParseError("struct variable requires an initializer", tokens[_pos]);
+        auto init = parse_expression(tokens);
+        if (!init) throw ParseError("expected struct initializer expression", tokens[_pos]);
+        if (consume(tokens, (Token::Type)';').type == Token::NONE)
+            throw ParseError("expected ';'", tokens[_pos]);
+        return new DeclVarSt(
+            new InitializedDeclVar(id_token.id, VarType::STRUCT, is_const, init, struct_name, false, ti));
+    }
+
+    VarType vtype = ti.base_type;
+
     // Scalar: var name: type [= expr];
     if (consume(tokens, (Token::Type)'=').type != Token::NONE) {
         auto init = parse_expression(tokens);
@@ -846,13 +876,13 @@ Statement *Parser::parse_declvarst(vector<Token> &tokens) {
             throw ParseError("expected expression after '='", tokens[_pos]);
         if (consume(tokens, (Token::Type)';').type == Token::NONE)
             throw ParseError("expected ';'", tokens[_pos]);
-        return new DeclVarSt(new InitializedDeclVar(id_token.id, vtype, is_const, init));
+        return new DeclVarSt(new InitializedDeclVar(id_token.id, vtype, is_const, init, "", false, ti));
     }
     if (is_const)
         throw ParseError("'let' declaration requires an initializer", tokens[_pos]);
     if (consume(tokens, (Token::Type)';').type == Token::NONE)
         throw ParseError("expected ';'", tokens[_pos]);
-    return new DeclVarSt(new DeclVar(id_token.id, vtype, false));
+    return new DeclVarSt(new DeclVar(id_token.id, vtype, false, "", false, ti));
 }
 
 Statement *Parser::parse_statement(vector<Token> &tokens) {
@@ -1079,6 +1109,89 @@ Expression *Parser::parse_class_init(vector<Token> &tokens) {
     return new ClassInit(class_name, std::move(args));
 }
 
+TypeInfo Parser::parse_type(vector<Token> &tokens) {
+    TypeInfo ti;
+    if (is_type_keyword(tokens[_pos].type)) {
+        ti.base_type = token_to_vartype(tokens[_pos].type);
+        ti.type_name = "";
+        _pos++;
+    } else if (tokens[_pos].type == Token::TK_ID) {
+        string id = tokens[_pos].id;
+        _pos++;
+        if (id == "Array") {
+            ti.base_type = VarType::ARRAY;
+            ti.type_name = "Array";
+        } else if (_class_defs.count(id)) {
+            ti.base_type = VarType::CLASS;
+            ti.type_name = id;
+        } else if (_struct_defs.count(id)) {
+            ti.base_type = VarType::STRUCT;
+            ti.type_name = id;
+        } else if (id.length() == 1 && isupper(id[0])) {
+            ti.base_type = VarType::CLASS;
+            ti.type_name = id;
+        } else {
+            throw ParseError("unknown type '" + id + "'", tokens[_pos - 1]);
+        }
+    } else {
+        throw ParseError("expected type name", tokens[_pos]);
+    }
+
+    if (_pos < (int)tokens.size() && tokens[_pos].type == (Token::Type)'<') {
+        _pos++; // consume '<'
+        while (true) {
+            TypeInfo arg = parse_type(tokens);
+            ti.generic_args.push_back(arg);
+            if (_pos < (int)tokens.size() && tokens[_pos].type == (Token::Type)'>') {
+                _pos++; // consume '>'
+                break;
+            }
+            if (consume(tokens, (Token::Type)',').type == Token::NONE) {
+                throw ParseError("expected ',' or '>' in generic type argument list", tokens[_pos]);
+            }
+        }
+        if (ti.type_name == "Array") {
+            ti.base_type = VarType::ARRAY;
+        }
+    }
+
+    if (_pos < (int)tokens.size() && tokens[_pos].type == (Token::Type)'?') {
+        ti.is_nullable = true;
+        _pos++;
+    }
+
+    while (_pos + 1 < (int)tokens.size() && tokens[_pos].type == (Token::Type)'[' && tokens[_pos + 1].type == (Token::Type)']') {
+        _pos += 2; // consume '[]'
+        TypeInfo arr_ti;
+        arr_ti.base_type = VarType::ARRAY;
+        arr_ti.type_name = "Array";
+        arr_ti.generic_args.push_back(ti);
+        ti = arr_ti;
+    }
+
+    return ti;
+}
+
+Expression *Parser::parse_array_literal(vector<Token> &tokens) {
+    if (tokens[_pos].type != (Token::Type)'[') return NULL;
+    _pos++; // consume '['
+    vector<Expression *> elements;
+    if (tokens[_pos].type != (Token::Type)']') {
+        while (true) {
+            auto elem = parse_expression(tokens);
+            if (!elem) throw ParseError("expected expression in array literal", tokens[_pos]);
+            elements.push_back(elem);
+            if (tokens[_pos].type == (Token::Type)']') break;
+            if (consume(tokens, (Token::Type)',').type == Token::NONE) {
+                throw ParseError("expected ',' or ']' in array literal", tokens[_pos]);
+            }
+            if (tokens[_pos].type == (Token::Type)']') break; // trailing comma
+        }
+    }
+    consume(tokens, (Token::Type)']');
+    return new ArrayLiteralExp(std::move(elements));
+}
+
 Expression *Parser::parse_term(vector<Token> &tokens) {
     Token token;
     Expression *exp;
@@ -1091,6 +1204,7 @@ Expression *Parser::parse_term(vector<Token> &tokens) {
         _pos++;
         return new StringExp(s);
     }
+    if ((exp = parse_array_literal(tokens))) return exp;
     if ((exp = parse_class_init(tokens))) return exp;
     if ((exp = parse_struct_init(tokens))) return exp;
     if ((exp = parse_call(tokens))) return exp;

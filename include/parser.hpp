@@ -72,6 +72,8 @@ private:
   Expression *parse_term(vector<Token> &);
   Expression *parse_integer(vector<Token> &);
   Expression *parse_call(vector<Token> &);
+  TypeInfo parse_type(vector<Token> &);
+  Expression *parse_array_literal(vector<Token> &);
   Expression *parse_struct_init(vector<Token> &);
   Expression *parse_class_init(vector<Token> &);
   vector<Expression *> parse_arg(vector<Token> &);
