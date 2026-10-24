@@ -689,3 +689,58 @@ TEST(ClassSuperTest, InvalidTargetsAndArgumentCounts) {
         EXPECT_THROW(llvm_emit_ir(source), CompileError) << source;
     }
 }
+
+TEST(ClassSuperTest, DoubleReturnPreservesFractionAcrossParentChain) {
+    EXPECT_EQ(run_llvm(
+        "class Base { func value() -> double { return 1.25; } } "
+        "class Child: Base { override func value() -> double { return super.value() * 2; } } "
+        "class Leaf: Child { override func value() -> double { return super.value() + 0.75; } } "
+        "func main() -> int { var c = Leaf(); return c.value() * 20; }"), 65);
+}
+
+TEST(ClassSuperTest, FloatConstructorAndMethodConversions) {
+    EXPECT_EQ(run_llvm(
+        "class Base { var value: float; constructor(value: float) { this.value = value; } "
+        "func amount() -> float { return this.value; } } "
+        "class Child: Base { constructor(value: double) { super(value); } "
+        "override func amount() -> float { return super.amount() + 0.5; } } "
+        "func main() -> int { var c = Child(1.25); return c.amount() * 100; }"), 175);
+}
+
+TEST(ClassSuperTest, DoubleParentCallRetainsVirtualDispatch) {
+    EXPECT_EQ(run_llvm(
+        "class Base { func part() -> double { return 1.5; } "
+        "func value() -> double { return this.part() + 0.25; } } "
+        "class Child: Base { override func part() -> double { return 2.5; } "
+        "override func value() -> double { return super.value() + 0.25; } } "
+        "func main() -> int { var c = Child(); return c.value() * 10; }"), 30);
+}
+
+TEST(ClassSuperTest, FloatingMethodCanWidenIntegerAndFallThrough) {
+    EXPECT_EQ(run_llvm(
+        "class Base { func integer() -> double { return 2; } "
+        "func empty() -> float {} } "
+        "class Child: Base { func value() -> int { return super.integer() * 10 + super.empty(); } } "
+        "func ordinary() -> int { return 3; } "
+        "func main() -> int { var c = Child(); return c.value() + ordinary(); }"), 23);
+}
+
+TEST(ClassSuperTest, FloatingParentUsesDoubleReturnABI) {
+    auto ir = llvm_emit_ir(
+        "class Base { func value() -> double { return 1.25; } } "
+        "class Child: Base { override func value() -> double { return super.value() + 0.5; } } "
+        "func main() -> int { var c = Child(); return c.value(); }");
+    EXPECT_NE(ir.find("define double @Base.value(ptr %this)"), std::string::npos);
+    EXPECT_NE(ir.find("call double (ptr) @Base.value("), std::string::npos);
+}
+
+TEST(ClassSuperTest, RejectsIncompatibleFloatingOverrideABI) {
+    for (const auto &source : {
+        "class Base { func value() -> double { return 1.25; } } class Child: Base { override func value() -> int { return 2; } }",
+        "class Base { func value() -> int { return 1; } } class Child: Base { override func value() -> float { return 2.5; } }",
+        "class Base { func value(x: double) -> int { return 1; } } class Child: Base { override func value(x: float) -> int { return 2; } }"}) {
+        Lexer lexer; Parser parser;
+        auto tokens = lexer.lex(source);
+        EXPECT_THROW(parser.parse(tokens), ParseError) << source;
+    }
+}

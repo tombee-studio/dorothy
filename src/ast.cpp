@@ -1211,11 +1211,11 @@ VarType CallMethodExp::llvm_declared_type(LLVMGenCtx& ctx) const {
     string cname;
     if (auto super = dynamic_cast<SuperExpr *>(_object)) {
         cname = super->getBaseClass();
-    } else if (_object->getVarName() == "$this" && !g_this_class.empty()) {
-        cname = g_this_class;
+    } else if (_object->getVarName() == "$this" && !ctx.this_class.empty()) {
+        cname = ctx.this_class;
     } else {
-        auto it = ctx.struct_var_types.find(_object->getVarName());
-        if (it != ctx.struct_var_types.end()) cname = it->second;
+        auto it = ctx.class_var_types.find(_object->getVarName());
+        if (it != ctx.class_var_types.end()) cname = it->second;
     }
     if (!cname.empty() && g_class_defs.count(cname)) {
         auto* minfo = g_class_defs[cname].getMethod(_method_name);
