@@ -993,6 +993,32 @@ public:
   }
 };
 
+// Lexically bound base receiver, used only by super.method(...).
+class SuperExpr : public ThisExpr {
+  string _base_class;
+public:
+  explicit SuperExpr(string base_class) : _base_class(std::move(base_class)) {}
+  const string &getBaseClass() const { return _base_class; }
+  void print(ostream &os, int) override { os << "super"; }
+};
+
+class SuperConstructorExp : public Expression {
+  string _base_class;
+  vector<Expression *> _args;
+public:
+  SuperConstructorExp(string base_class, vector<Expression *> args)
+      : _base_class(std::move(base_class)), _args(std::move(args)) {}
+  void print(ostream &, int) override;
+  void compile(vector<Code> &, map<string, int> &, map<string, int> &, int) override {
+    throw CompileError("classes are only supported in LLVM target");
+  }
+  void lcompile(vector<Code> &, map<string, int> &, map<string, int> &, int) override {
+    throw CompileError("super constructor call is not assignable");
+  }
+  string llvm_rval(LLVMGenCtx &) override;
+  void collect_strings(LLVMGenCtx &) override;
+};
+
 // ===== Class expression and statement nodes =====
 
 class ClassInit : public Expression {

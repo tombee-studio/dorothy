@@ -625,3 +625,67 @@ TEST(ClassTest, ExecMassiveDynamicCreationInLoop) {
         "}\n";
     EXPECT_EQ(run_llvm(src), 50);
 }
+
+// super binds to the lexical parent and bypasses virtual dispatch.
+TEST(ClassSuperTest, ConstructorAndMethodChain) {
+    EXPECT_EQ(run_llvm(
+        "class Base { var x: int; constructor(x: int) { this.x = x; } "
+        "func value(n: int) -> int { return this.x + n; } } "
+        "class Child: Base { var y: int; "
+        "constructor(x: int, y: int) { super(x); this.y = y; } "
+        "override func value(n: int) -> int { return super.value(n) + this.y; } } "
+        "class Leaf: Child { constructor(x: int, y: int) { super(x, y); } "
+        "override func value(n: int) -> int { return super.value(n) + 1; } } "
+        "func main() -> int { var c = Leaf(10, 20); return c.value(3); }"), 34);
+}
+
+TEST(ClassSuperTest, InheritedMethodUsesDefiningClass) {
+    EXPECT_EQ(run_llvm(
+        "class A { func value() -> int { return 10; } } "
+        "class B: A {} "
+        "class C: B { override func value() -> int { return super.value() + 2; } } "
+        "func main() -> int { var c = C(); return c.value(); }"), 12);
+}
+
+TEST(ClassSuperTest, BaseCallPreservesVirtualDispatchInsideParent) {
+    EXPECT_EQ(run_llvm(
+        "class A { func value() -> int { return this.extra() + 1; } "
+        "func extra() -> int { return 2; } } "
+        "class B: A { override func value() -> int { return super.value() + 3; } "
+        "override func extra() -> int { return 10; } } "
+        "func main() -> int { var b = B(); return b.value(); }"), 14);
+}
+
+TEST(ClassSuperTest, DefaultBaseConstructorAndStringArguments) {
+    EXPECT_EQ(run_llvm(
+        "class A {} class B: A { constructor() { super(); } } "
+        "class Text { var text: string; constructor(text: string) { this.text = text; } "
+        "func length() -> int { if(this.text == \"hello\") { return 5; } return 0; } } "
+        "class Message: Text { constructor() { super(\"hello\"); } "
+        "override func length() -> int { return super.length(); } } "
+        "func main() -> int { var b = B(); var m = Message(); return m.length(); }"), 5);
+}
+
+TEST(ClassSuperTest, InvalidContexts) {
+    for (const auto &source : {
+        "func main() -> int { return super.value(); }",
+        "class A { constructor() { super(); } }",
+        "class A {} class B: A { func f() -> int { super(); return 0; } }",
+        "class A {} class B: A { constructor() { super; } }",
+        "struct A { constructor() { super(); } }"}) {
+        Lexer lexer; Parser parser;
+        auto tokens = lexer.lex(source);
+        EXPECT_THROW(parser.parse(tokens), ParseError) << source;
+    }
+}
+
+TEST(ClassSuperTest, InvalidTargetsAndArgumentCounts) {
+    for (const auto &source : {
+        "class A {} class B: A { constructor() { super(1); } } func main() -> int { return 0; }",
+        "class A { constructor(x: int) {} } class B: A { constructor() { super(); } } func main() -> int { return 0; }",
+        "class A {} class B: A { func f() -> int { return super.missing(); } } func main() -> int { return 0; }",
+        "class A { func f(x: int) -> int { return x; } } class B: A { override func f(x: int) -> int { return super.f(); } } func main() -> int { return 0; }",
+        "abstract class A { abstract func f() -> int; } class B: A { override func f() -> int { return super.f(); } } func main() -> int { return 0; }"}) {
+        EXPECT_THROW(llvm_emit_ir(source), CompileError) << source;
+    }
+}

@@ -1209,7 +1209,9 @@ void CallMethodExp::lcompile(vector<Code>&, map<string, int>&, map<string, int>&
 VarType CallMethodExp::llvm_declared_type(LLVMGenCtx& ctx) const {
     // Determine the return type of the method
     string cname;
-    if (_object->getVarName() == "$this" && !g_this_class.empty()) {
+    if (auto super = dynamic_cast<SuperExpr *>(_object)) {
+        cname = super->getBaseClass();
+    } else if (_object->getVarName() == "$this" && !g_this_class.empty()) {
         cname = g_this_class;
     } else {
         auto it = ctx.struct_var_types.find(_object->getVarName());
@@ -1278,3 +1280,12 @@ void ArrayLiteralExp::collect_strings(LLVMGenCtx& ctx) {
 }
 
 
+
+void SuperConstructorExp::print(ostream &os, int tab) {
+    os << "super(";
+    for (int i = 0; i < (int)_args.size(); ++i) {
+        if (i) os << ", ";
+        _args[i]->print(os, tab);
+    }
+    os << ")";
+}

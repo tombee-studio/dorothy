@@ -398,3 +398,33 @@ dorothy/
 
 MIT License
 
+
+### Calling the base class with `super`
+
+In a derived constructor, `super(...)` calls the immediate base class constructor
+on the same instance. In a derived constructor or method, `super.method(...)`
+calls the parent's implementation directly, bypassing the instance's vtable.
+Inherited implementations are resolved to the class that defines them. Virtual
+calls made by the parent implementation still dispatch on the original instance.
+
+```dorothy
+class Base {
+    var x: int;
+    constructor(x: int) { this.x = x; }
+    func value() -> int { return this.x; }
+}
+class Child: Base {
+    constructor(x: int) { super(x); }
+    override func value() -> int { return super.value() + 1; }
+}
+func main() -> int {
+    var child = Child(10);
+    return child.value();
+}
+```
+
+Both forms require matching argument counts. A parent without a constructor
+accepts only `super()`, which does nothing. Parent construction is explicit;
+`super(...)` is not inserted automatically. Calling an abstract parent method
+or using `super` outside a derived class is an error. Classes, including `super`,
+use the LLVM target (`--emit-llvm` or `--target`); the VM does not support classes.

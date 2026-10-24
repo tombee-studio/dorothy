@@ -35,6 +35,7 @@ struct Token {
         KW_STRUCT,
         KW_CONSTRUCTOR,
         KW_THIS,
+        KW_SUPER,
         KW_CLASS,
         KW_ABSTRACT,
         KW_OVERRIDE,
