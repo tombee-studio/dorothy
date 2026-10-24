@@ -271,8 +271,33 @@ void Parser::parse_struct_def(vector<Token> &tokens) {
             auto body = parse_block(tokens);
             auto ci = new ConstructorInfo{params, body, params_decl};
             sdef.constructor = ci;
+        } else if (consume(tokens, Token::KW_FUNC).type != Token::NONE) {
+            Token name = consume(tokens, Token::TK_ID);
+            if (name.type == Token::NONE || sdef.methods.count(name.id))
+                throw ParseError("expected unique struct method name", tokens[_pos]);
+            auto params = parse_declargs(tokens);
+            for (auto param : params)
+                if (param->getType() == VarType::STRUCT)
+                    throw ParseError("struct method parameters must be primitive or reference types", tokens[_pos]);
+            TypeInfo result;
+            if (consume(tokens, Token::TK_ARROW).type != Token::NONE ||
+                consume(tokens, (Token::Type)':').type != Token::NONE) result = parse_type(tokens);
+            if (result.base_type == VarType::STRUCT)
+                throw ParseError("struct-valued method returns are not supported", tokens[_pos]);
+            auto body = parse_block(tokens);
+            if (!body) throw ParseError("expected struct method body", tokens[_pos]);
+            auto method = new MethodInfo();
+            method->name = name.id; method->params = params; method->body = body;
+            method->ret_type = result.base_type; method->ret_type_name = result.type_name;
+            method->is_ret_nullable = result.is_nullable; method->class_name = struct_name;
+            sdef.methods[name.id] = method;
+            auto function = new Function(struct_name + "." + name.id, params, body,
+                                         result.base_type, result.type_name, true, result.is_nullable);
+            function->setReceiverStruct(struct_name);
+            function->setReturnTypeInfo(result);
+            _functions.push_back(function);
         } else {
-            throw ParseError("expected 'var' or 'constructor' in struct body", tokens[_pos]);
+            throw ParseError("expected field, constructor, or method in struct body", tokens[_pos]);
         }
     }
 

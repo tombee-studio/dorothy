@@ -255,6 +255,15 @@ class NullChecker {
                 invalidate(f);
                 return {type(VarType::LONG)};
             }
+            if (obj.type.base_type == VarType::STRUCT && g_struct_defs.count(obj.type.type_name)) {
+                const auto &def = g_struct_defs.at(obj.type.type_name);
+                auto method = def.methods.find(c->getMethodName());
+                if (method == def.methods.end()) error("unknown struct method: " + c->getMethodName());
+                arguments(c->getArgs(), method->second->params, f, c->getMethodName());
+                invalidate(f);
+                return {type(method->second->ret_type, method->second->ret_type_name,
+                             method->second->is_ret_nullable), !method->second->is_ret_nullable};
+            }
             if (g_class_defs.count(obj.type.type_name)) {
                 auto method = g_class_defs.at(obj.type.type_name).getMethod(c->getMethodName());
                 if (method) {
@@ -484,6 +493,8 @@ public:
         for (auto f : program) {
             if (f->isImport()) continue;
             context = f->getName();
+            owner = f->getReceiverStruct();
+            struct_constructor = !owner.empty(); // value-type this, without constructor restrictions
             result = f->getReturnTypeInfo();
             result.base_type = f->getRetType(); result.type_name = f->getRetStructName(); result.is_nullable = f->isRetNullable();
             body(f->getBody(), f->getArgs());

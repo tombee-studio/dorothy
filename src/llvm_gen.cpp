@@ -1745,6 +1745,17 @@ void Function::llvm_emit(LLVMGenCtx& ctx) {
         }
     }
 
+    if (!_receiver_struct.empty()) {
+        int receiver_index = 0;
+        ctx.this_var = "$this";
+        ctx.struct_var_types["$this"] = _receiver_struct;
+        for (auto &leaf : get_leaf_fields(_receiver_struct)) {
+            string reg = "%receiver." + to_string(receiver_index++);
+            llvm_params.push_back({"ptr", reg});
+            ctx.struct_field_ptrs["$this"][leaf.path] = reg;
+        }
+    }
+
     int flat_idx = 0;
     for (auto* arg : _args) {
         if (arg->getType() == VarType::STRUCT) {
@@ -2536,6 +2547,29 @@ string ArrayLiteralExp::llvm_rval(LLVMGenCtx& ctx) {
 // ===== CallMethodExp =====
 
 string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
+    string struct_var = _object->getVarName();
+    if (dynamic_cast<ThisExpr *>(_object)) struct_var = ctx.this_var;
+    if ((dynamic_cast<Variable *>(_object) || dynamic_cast<ThisExpr *>(_object)) &&
+        ctx.struct_var_types.count(struct_var)) {
+        const auto &def = g_struct_defs.at(ctx.struct_var_types.at(struct_var));
+        auto method = def.methods.find(_method_name);
+        if (method == def.methods.end()) throw CompileError(("unknown struct method: " + _method_name).c_str());
+        if (_args.size() != method->second->params.size()) throw CompileError("incorrect struct method argument count");
+        vector<pair<string, string>> args;
+        for (auto &leaf : get_leaf_fields(def.name))
+            args.push_back({"ptr", ctx.struct_field_ptrs.at(struct_var).at(leaf.path)});
+        auto user_args = prepareCallArgs(ctx, def.name + "." + _method_name, _args);
+        args.insert(args.end(), user_args.begin(), user_args.end());
+        string result = ctx.fresh("struct.method");
+        ctx.out << "  " << result << " = call i64 @" << def.name << "." << _method_name << "(";
+        for (size_t i = 0; i < args.size(); ++i) {
+            if (i) ctx.out << ", ";
+            ctx.out << args[i].first << " " << args[i].second;
+        }
+        ctx.out << ")\n";
+        return result;
+    }
+
     auto* var_expr_check = dynamic_cast<Variable*>(_object);
     bool is_arr = false;
     if (var_expr_check && ctx.var_types.count(var_expr_check->getVarName()) && ctx.var_types[var_expr_check->getVarName()] == VarType::ARRAY) {

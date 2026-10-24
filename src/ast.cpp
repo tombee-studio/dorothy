@@ -472,29 +472,45 @@ void Function::print(ostream& os, int tab) {
 
 void Function::compile(vector<Code>& ofs, map<string, int>& vars,
                        map<string, int>& functions, int offset) {
+    vector<DeclVar *> args = _args;
+    DeclVar receiver("$thisptr");
+    if (!_receiver_struct.empty()) args.insert(args.begin(), &receiver);
     vars.clear();
     vars["."] = 0;
     g_var_struct_types.clear();
     g_this_struct.clear();
     functions[_id] = ofs.size() - 1 + offset;
+    // Unresolved calls carry a negative relocation ID owned by this compilation's
+    // function table, so independent or failed compilations cannot share fixups.
+    auto pending = functions.find("$pending:" + _id);
+    if (pending != functions.end()) {
+        for (auto &code : ofs)
+            if (code.mnemonic == Code::CALL && code.op1 == pending->second)
+                code.op1 = functions[_id];
+        functions.erase(pending);
+    }
     ofs.push_back(Code::makeCode(Code::PUSHR, 0, 0));
     ofs.push_back(Code::makeCode(Code::MOVE, 0, 1));
-    if (_args.size() > 0) {
-        for (auto arg : _args) {
+    if (args.size() > 0) {
+        for (auto arg : args) {
             arg->compile(ofs, vars, functions, offset);
         }
-        for (int i = 0; i < _args.size(); i++) {
+        for (int i = 0; i < args.size(); i++) {
             ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
             ofs.push_back(Code::makeCode(Code::MOVEI, 3, i + 2));
             ofs.push_back(Code::makeCode(Code::ADD, 0, 0));
             ofs.push_back(Code::makeCode(Code::LOAD, 2, 2));
             ofs.push_back(Code::makeCode(Code::PUSHR, 2, 0));
             ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
-            ofs.push_back(Code::makeCode(Code::MOVEI, 3, _args.size() - i));
+            ofs.push_back(Code::makeCode(Code::MOVEI, 3, args.size() - i));
             ofs.push_back(Code::makeCode(Code::SUB, 0, 0));
             ofs.push_back(Code::makeCode(Code::POP, 3, 0));
             ofs.push_back(Code::makeCode(Code::STORE, 2, 3));
         }
+    }
+    if (!_receiver_struct.empty()) {
+        g_this_struct = _receiver_struct;
+        g_var_struct_types["$this"] = _receiver_struct;
     }
     _body->compile(ofs, vars, functions, offset);
     ofs.push_back(Code::makeCode(Code::PUSHI, 0, 0));
@@ -1096,6 +1112,16 @@ static void member_lcompile_impl(const string& varname, const string& path,
         throw CompileError(("not a struct variable: " + varname).c_str());
     const string& struct_name = type_it->second;
     int flat_idx = get_flat_index(struct_name, path);
+    if (varname == "$this" && vars.count("$thisptr")) {
+        map<string, int> unused;
+        Variable("$thisptr").compile(codes, vars, unused, 0);
+        codes.push_back(Code::makeCode(Code::POP, 2, 0));
+        codes.push_back(Code::makeCode(Code::PUSHI, flat_idx, 0));
+        codes.push_back(Code::makeCode(Code::POP, 3, 0));
+        codes.push_back(Code::makeCode(Code::SUB, 0, 0));
+        codes.push_back(Code::makeCode(Code::PUSHR, 2, 0));
+        return;
+    }
     int slot = vars.at(varname) + flat_idx;
     codes.push_back(Code::makeCode(Code::MOVE, 2, 0));
     codes.push_back(Code::makeCode(Code::PUSHI, slot, 0));
@@ -1198,8 +1224,32 @@ void CallMethodExp::print(ostream& os, int tab) {
     os << ")";
 }
 
-void CallMethodExp::compile(vector<Code>&, map<string, int>&, map<string, int>&, int) {
-    throw CompileError("methods are only supported in LLVM target");
+void CallMethodExp::compile(vector<Code>& codes, map<string, int>& vars,
+                            map<string, int>& functions, int offset) {
+    string receiver = _object->getVarName();
+    if ((!dynamic_cast<Variable *>(_object) && !dynamic_cast<ThisExpr *>(_object)) ||
+        !g_var_struct_types.count(receiver))
+        throw CompileError("VM method receiver must be a struct variable or this");
+    const auto &def = g_struct_defs.at(g_var_struct_types.at(receiver));
+    auto it = def.methods.find(_method_name);
+    if (it == def.methods.end()) throw CompileError(("unknown struct method: " + _method_name).c_str());
+    if (_args.size() != it->second->params.size()) throw CompileError("incorrect struct method argument count");
+    if (receiver == "$this" && vars.count("$thisptr"))
+        Variable("$thisptr").compile(codes, vars, functions, offset);
+    else if (receiver == "$this")
+        Variable("$this").lcompile(codes, vars, functions, offset);
+    else _object->lcompile(codes, vars, functions, offset);
+    for (auto arg : _args) arg->compile(codes, vars, functions, offset);
+    string target = def.name + "." + _method_name;
+    int address = functions.count(target) ? functions.at(target) : 0;
+    if (!address) {
+        string key = "$pending:" + target;
+        if (!functions.count(key)) functions[key] = --functions["$next-method-relocation"];
+        address = functions.at(key);
+    }
+    codes.push_back(Code::makeCode(Code::CALL, address, 0));
+    for (size_t i = 0; i < _args.size() + 1; ++i) codes.push_back(Code::makeCode(Code::POP, 3, 0));
+    codes.push_back(Code::makeCode(Code::PUSHR, 2, 0));
 }
 
 void CallMethodExp::lcompile(vector<Code>&, map<string, int>&, map<string, int>&, int) {
@@ -1207,6 +1257,12 @@ void CallMethodExp::lcompile(vector<Code>&, map<string, int>&, map<string, int>&
 }
 
 VarType CallMethodExp::llvm_declared_type(LLVMGenCtx& ctx) const {
+    string struct_var = dynamic_cast<ThisExpr *>(_object) ? ctx.this_var : _object->getVarName();
+    if (ctx.struct_var_types.count(struct_var)) {
+        const auto &def = g_struct_defs.at(ctx.struct_var_types.at(struct_var));
+        auto method = def.methods.find(_method_name);
+        if (method != def.methods.end()) return method->second->ret_type;
+    }
     // Determine the return type of the method
     string cname;
     if (auto super = dynamic_cast<SuperExpr *>(_object)) {
@@ -1234,8 +1290,10 @@ void CallMethodSt::print(ostream& os, int tab) {
     os << ";" << endl;
 }
 
-void CallMethodSt::compile(vector<Code>&, map<string, int>&, map<string, int>&, int) {
-    throw CompileError("methods are only supported in LLVM target");
+void CallMethodSt::compile(vector<Code>& codes, map<string, int>& vars,
+                           map<string, int>& functions, int offset) {
+    _call->compile(codes, vars, functions, offset);
+    codes.push_back(Code::makeCode(Code::POP, 3, 0));
 }
 
 void ClassDef::print(ostream& os, int tab) {

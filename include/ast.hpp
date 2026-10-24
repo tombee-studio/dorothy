@@ -25,6 +25,7 @@ using std::vector;
 class Expression;
 class Statement;
 class DeclVar;
+struct MethodInfo;
 
 // ===== Struct type info =====
 
@@ -44,6 +45,7 @@ struct ConstructorInfo {
 
 struct StructDefInfo {
   string name;
+  map<string, MethodInfo *> methods;
   vector<FieldInfo> fields;
   ConstructorInfo *constructor = nullptr;
 
@@ -230,6 +232,7 @@ protected:
   bool _has_explicit_ret_type;
   bool _is_ret_nullable;
   TypeInfo _return_type_info;
+  string _receiver_struct;
 
 public:
   Function(string id, vector<DeclVar *> args, Statement *body,
@@ -245,6 +248,8 @@ public:
   virtual void llvm_emit(LLVMGenCtx &);
   void llvm_pre_register(LLVMGenCtx &);
   const string &getName() const { return _id; }
+  const string &getReceiverStruct() const { return _receiver_struct; }
+  void setReceiverStruct(const string &name) { _receiver_struct = name; }
   VarType getRetType() const { return _ret_type; }
   const string &getRetStructName() const { return _ret_struct_name; }
   const string &getRetClassName() const { return _ret_struct_name; }
