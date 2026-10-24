@@ -158,6 +158,8 @@ void Parser::parse_top_level(vector<Token> &tokens, const string &base_dir) {
 
 vector<Function *> Parser::parse(vector<Token> &tokens, const string &base_dir) {
     _pos = 0;
+    _current_class.clear();
+    _in_constructor = false;
     _struct_defs.clear();
     g_struct_defs.clear();
     _class_defs.clear();
@@ -179,6 +181,8 @@ vector<Function *> Parser::parse_file(const string &filepath) {
     }
     string canonical_path = fs::weakly_canonical(p).string();
     _pos = 0;
+    _current_class.clear();
+    _in_constructor = false;
     _struct_defs.clear();
     g_struct_defs.clear();
     _class_defs.clear();
@@ -325,6 +329,7 @@ void Parser::parse_class_def(vector<Token> &tokens) {
 
     _class_defs[class_name] = cdef;
     g_class_defs[class_name] = cdef;
+    _current_class = class_name;
 
     while (tokens[_pos].type != (Token::Type)'}' && tokens[_pos].type != Token::TK_EOF) {
         if (tokens[_pos].type == Token::KW_VAR) {
@@ -367,7 +372,10 @@ void Parser::parse_class_def(vector<Token> &tokens) {
             vector<pair<string, VarType>> params;
             for (auto *d : params_decl)
                 params.push_back({d->getId(), d->getType()});
+            _in_constructor = true;
             auto body = parse_block(tokens);
+            _in_constructor = false;
+            if (!body) throw ParseError("expected constructor body", tokens[_pos]);
             cdef.constructor = new ConstructorInfo{params, body};
         } else if (tokens[_pos].type == Token::KW_ABSTRACT) {
             // abstract func mname(params): ret; OR abstract func mname(params) -> ret;
@@ -515,6 +523,7 @@ void Parser::parse_class_def(vector<Token> &tokens) {
     _class_defs[class_name] = cdef;
     g_class_defs[class_name] = cdef;
     _defined_types.insert(class_name);
+    _current_class.clear();
 }
 
 Function *Parser::parse_function(vector<Token> &tokens) {
@@ -1186,6 +1195,22 @@ Expression *Parser::parse_array_literal(vector<Token> &tokens) {
 Expression *Parser::parse_term(vector<Token> &tokens) {
     Token token;
     Expression *exp;
+    if (consume(tokens, Token::KW_SUPER).type != Token::NONE) {
+        if (_current_class.empty() || _class_defs.at(_current_class).base_class.empty())
+            throw ParseError("super requires a derived class body", tokens[_pos]);
+        string base = _class_defs.at(_current_class).base_class;
+        if (tokens[_pos].type == (Token::Type)'(') {
+            if (!_in_constructor)
+                throw ParseError("super(...) is only valid in a constructor", tokens[_pos]);
+            return new SuperConstructorExp(base, parse_arg(tokens));
+        }
+        if (consume(tokens, (Token::Type)'.').type == Token::NONE)
+            throw ParseError("expected '(' or '.' after super", tokens[_pos]);
+        Token name = consume(tokens, Token::TK_ID);
+        if (name.type == Token::NONE)
+            throw ParseError("expected method name after super.", tokens[_pos]);
+        return new CallMethodExp(new SuperExpr(base), name.id, parse_arg(tokens));
+    }
     if (tokens[_pos].type == Token::KW_NULL) {
         _pos++;
         return new NullExp();

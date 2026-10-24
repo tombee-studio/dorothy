@@ -737,6 +737,7 @@ void LLVMGenCtx::emit_release_all_scopes() {
 
 static string resolve_expr_class_name(LLVMGenCtx& ctx, Expression* expr) {
     if (!expr) return "";
+    if (auto super = dynamic_cast<SuperExpr *>(expr)) return super->getBaseClass();
     if (dynamic_cast<ThisExpr*>(expr)) {
         return ctx.this_class;
     }
@@ -2608,17 +2609,28 @@ string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
     }
     auto* minfo = cdef.getMethod(_method_name);
 
-    // Load vtable pointer from %obj_ptr (index 0)
-    string vtable_addr = ctx.fresh("vtable.addr");
-    ctx.out << "  " << vtable_addr << " = getelementptr ptr, ptr " << obj_ptr << ", i32 0\n";
-    string vtable_ptr = ctx.fresh("vtable.ptr");
-    ctx.out << "  " << vtable_ptr << " = load ptr, ptr " << vtable_addr << "\n";
+    string fn_ptr;
+    if (dynamic_cast<SuperExpr *>(_object)) {
+        if (!minfo || minfo->is_abstract || !minfo->body)
+            throw CompileError("cannot call abstract base method with super");
+        if (_args.size() != minfo->params.size())
+            throw CompileError("incorrect number of super method arguments");
+        // Bypass the receiver's vtable; inherited methods retain their defining class.
+        fn_ptr = "@" + minfo->class_name + "." + minfo->name;
+    } else {
+        // Load vtable pointer from %obj_ptr (index 0)
+        string vtable_addr = ctx.fresh("vtable.addr");
+        ctx.out << "  " << vtable_addr << " = getelementptr ptr, ptr " << obj_ptr << ", i32 0\n";
+        string vtable_ptr = ctx.fresh("vtable.ptr");
+        ctx.out << "  " << vtable_ptr << " = load ptr, ptr " << vtable_addr << "\n";
 
-    // Load function pointer from vtable at vtable_idx + 1 (slot 0 is destructor)
-    string fn_addr = ctx.fresh("fn.addr");
-    ctx.out << "  " << fn_addr << " = getelementptr ptr, ptr " << vtable_ptr << ", i32 " << (vtable_idx + 1) << "\n";
-    string fn_ptr = ctx.fresh("fn.ptr");
-    ctx.out << "  " << fn_ptr << " = load ptr, ptr " << fn_addr << "\n";
+        // Load function pointer from vtable at vtable_idx + 1 (slot 0 is destructor)
+        string fn_addr = ctx.fresh("fn.addr");
+        ctx.out << "  " << fn_addr << " = getelementptr ptr, ptr " << vtable_ptr << ", i32 " << (vtable_idx + 1) << "\n";
+        fn_ptr = ctx.fresh("fn.ptr");
+        ctx.out << "  " << fn_ptr << " = load ptr, ptr " << fn_addr << "\n";
+
+    }
 
     // Build signature and call
     string ret_str = (minfo->ret_type == VarType::STRUCT) ? "void" : "i64";
@@ -2851,3 +2863,39 @@ void CallMethodSt::collect_strings(LLVMGenCtx& ctx) {
 }
 
 
+
+string SuperConstructorExp::llvm_rval(LLVMGenCtx &ctx) {
+    if (ctx.this_ptr_reg.empty() || !g_class_defs.count(_base_class))
+        throw CompileError("super constructor requires a derived constructor");
+    const auto &base = g_class_defs.at(_base_class);
+    if (!base.constructor) {
+        if (!_args.empty()) throw CompileError("default base constructor takes no arguments");
+        return "0";
+    }
+    if (_args.size() != base.constructor->params.size())
+        throw CompileError("incorrect number of super constructor arguments");
+    vector<pair<string, string>> args{{"ptr", ctx.this_ptr_reg}};
+    for (int i = 0; i < (int)_args.size(); ++i) {
+        string value = _args[i]->llvm_rval(ctx);
+        VarType type = base.constructor->params[i].second;
+        if (type == VarType::CLASS || type == VarType::STRING || type == VarType::ARRAY) {
+            string ptr = ctx.fresh("super.arg");
+            ctx.out << "  " << ptr << " = inttoptr i64 " << value << " to ptr\n";
+            value = ptr;
+        } else {
+            value = llvm_coerce(ctx, value, _args[i]->llvm_etype(ctx), type);
+        }
+        args.push_back({llvm_type_str(type), value});
+    }
+    ctx.out << "  call void @" << _base_class << ".constructor(";
+    for (int i = 0; i < (int)args.size(); ++i) {
+        if (i) ctx.out << ", ";
+        ctx.out << args[i].first << " " << args[i].second;
+    }
+    ctx.out << ")\n";
+    return "0";
+}
+
+void SuperConstructorExp::collect_strings(LLVMGenCtx &ctx) {
+    for (auto arg : _args) arg->collect_strings(ctx);
+}

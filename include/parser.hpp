@@ -21,6 +21,8 @@ public:
 
 class Parser {
   int _pos;
+  string _current_class;
+  bool _in_constructor = false;
   vector<Function *> _functions;
   map<string, StructDefInfo> _struct_defs;
   map<string, ClassDefInfo> _class_defs;
