@@ -154,31 +154,65 @@ func main() {
 
 ### Null-Safety
 
-Dorothy provides compile-time and runtime null-safety guarantees.
+Nullability is checked statically for managed class, string, and dynamic-array
+references before either backend generates code. `T` requires a non-null value;
+`T?` permits `null`. Use `null`, not numeric `0`, for nullable references.
 
-- **Non-nullable by default**: Variables of class types cannot be assigned `null` or left uninitialized.
-- **Nullable types (`T?`)**: Append `?` to class type names to permit `null`.
-- **Runtime Guard**: Attempting to access members on a `null` reference safely halts execution with a `NullPointerException`.
+A nullable receiver may be dereferenced only when control flow proves it non-null.
+The checker follows assignments, both branches of `if`, early returns, and loop
+back edges. It also checks reference arguments, constructor arguments, assignments,
+return values, and array elements. A nullable result cannot be assigned or passed
+to a non-null type without a proof that it is non-null.
 
 ```dorothy
 class Player {
-    var name: string;
-    constructor(n: string) {
-        this.name = n;
-    }
+    func score() -> int { return 42; }
 }
-
-func main() {
-    var p1: Player = Player("Alice"); // Non-nullable, must be initialized
-    // p1 = null;                     // Compile Error!
-
-    var p2: Player? = null;           // Nullable type allows null
-    p2 = Player("Bob");
-    p2 = null;                        // Reassignment to null allowed
-
-    // p2.name;                       // Triggers NullPointerException if null
+func score(player: Player?) -> int {
+    // player.score();              // Compile error: possibly null receiver
+    if (player == null) {
+        return 0;
+    }
+    return player.score();         // Non-null on this path
+}
+func main() -> int {
+    var player: Player? = null;
+    player = Player();
+    return score(player);
 }
 ```
+
+Null checks use `== null` or `!= null`, with either operand order. Proofs are
+limited to their lexical scope and control-flow path. Reassigning a local updates
+its null state. Assignments and calls invalidate proofs about mutable fields,
+including aliases. For a field that must remain usable across calls, capture a
+local reference and check that local:
+
+```dorothy
+var player = container.player;
+if (player != null) {
+    container.clear();
+    player.score();
+}
+```
+
+Every non-null reference field must be initialized on every constructor exit
+path, including reference fields nested inside value structs. Parent fields are
+initialized by an explicit `super(...)` call or explicit assignments. Constructors
+cannot expose a class's `this` or call instance methods (including
+`super.method(...)`): a subclass may still have uninitialized fields. Overrides cannot weaken non-null return guarantees or
+require non-null arguments where the parent accepts nullable arguments.
+
+Mutable arrays preserve element nullability: `Array<Player>` and `Array<Player?>`
+cannot alias through an implicit conversion. Capture nullable elements in a local
+and check that local before use. Empty array literals can be given an explicit
+reference element type, such as `var players: Array<Player> = [];`.
+
+The analysis is conservative: code it cannot prove safe is rejected. Runtime null
+guards remain as defense in depth. Raw numeric pointers, pointer dereferences,
+and memory modified by imported C code are outside managed-reference analysis;
+they retain the existing low-level interop semantics. Classes continue to require
+the LLVM target.
 
 ---
 

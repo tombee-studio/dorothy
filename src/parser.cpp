@@ -2,6 +2,7 @@
 #include <filesystem>
 #include "../include/lexer.hpp"
 #include "../include/parser.hpp"
+#include "../include/typechecker.hpp"
 #include "../include/utils.hpp"
 
 namespace fs = std::filesystem;
@@ -171,6 +172,7 @@ vector<Function *> Parser::parse(vector<Token> &tokens, const string &base_dir) 
     _base_dir = base_dir;
 
     parse_top_level(tokens, base_dir);
+    check_null_safety(_functions);
     return _functions;
 }
 
@@ -204,6 +206,7 @@ vector<Function *> Parser::parse_file(const string &filepath) {
 
     string base_dir = p.parent_path().string();
     parse_top_level(tokens, base_dir);
+    check_null_safety(_functions);
     return _functions;
 }
 
@@ -245,11 +248,11 @@ void Parser::parse_struct_def(vector<Token> &tokens) {
                      ti.get_element_type().base_type == VarType::DOUBLE ? "double" : "long")
                     : ti.get_element_type().type_name;
                 string arr_type_name = "Array<" + elem_name + ">";
-                sdef.fields.push_back({fname.id, VarType::ARRAY, arr_type_name, false});
+                sdef.fields.push_back({fname.id, VarType::ARRAY, arr_type_name, ti.is_nullable, ti});
             } else if (ti.base_type == VarType::STRUCT) {
-                sdef.fields.push_back({fname.id, VarType::STRUCT, ti.type_name, false});
+                sdef.fields.push_back({fname.id, VarType::STRUCT, ti.type_name, false, ti});
             } else {
-                sdef.fields.push_back({fname.id, ti.base_type, "", false});
+                sdef.fields.push_back({fname.id, ti.base_type, "", ti.is_nullable, ti});
             }
         } else if (tokens[_pos].type == Token::KW_CONSTRUCTOR) {
             // constructor(params) { body }
@@ -266,7 +269,7 @@ void Parser::parse_struct_def(vector<Token> &tokens) {
             for (auto *d : params_decl)
                 params.push_back({d->getId(), d->getType()});
             auto body = parse_block(tokens);
-            auto ci = new ConstructorInfo{params, body};
+            auto ci = new ConstructorInfo{params, body, params_decl};
             sdef.constructor = ci;
         } else {
             throw ParseError("expected 'var' or 'constructor' in struct body", tokens[_pos]);
@@ -354,13 +357,13 @@ void Parser::parse_class_def(vector<Token> &tokens) {
                      ti.get_element_type().base_type == VarType::DOUBLE ? "double" : "long")
                     : ti.get_element_type().type_name;
                 string arr_type_name = "Array<" + elem_name + ">";
-                cdef.fields.push_back({fname.id, VarType::ARRAY, arr_type_name, ti.is_nullable});
+                cdef.fields.push_back({fname.id, VarType::ARRAY, arr_type_name, ti.is_nullable, ti});
             } else if (ti.base_type == VarType::CLASS) {
-                cdef.fields.push_back({fname.id, VarType::CLASS, ti.type_name, ti.is_nullable});
+                cdef.fields.push_back({fname.id, VarType::CLASS, ti.type_name, ti.is_nullable, ti});
             } else if (ti.base_type == VarType::STRUCT) {
-                cdef.fields.push_back({fname.id, VarType::STRUCT, ti.type_name, false});
+                cdef.fields.push_back({fname.id, VarType::STRUCT, ti.type_name, false, ti});
             } else {
-                cdef.fields.push_back({fname.id, ti.base_type, "", false});
+                cdef.fields.push_back({fname.id, ti.base_type, "", ti.is_nullable, ti});
             }
         } else if (tokens[_pos].type == Token::KW_CONSTRUCTOR) {
             // constructor(params) { body }
@@ -376,7 +379,7 @@ void Parser::parse_class_def(vector<Token> &tokens) {
             auto body = parse_block(tokens);
             _in_constructor = false;
             if (!body) throw ParseError("expected constructor body", tokens[_pos]);
-            cdef.constructor = new ConstructorInfo{params, body};
+            cdef.constructor = new ConstructorInfo{params, body, params_decl};
         } else if (tokens[_pos].type == Token::KW_ABSTRACT) {
             // abstract func mname(params): ret; OR abstract func mname(params) -> ret;
             if (!is_abstract) {
@@ -558,12 +561,14 @@ Function *Parser::parse_function(vector<Token> &tokens) {
     auto declargs = parse_declargs(tokens);
     VarType ret_type = VarType::LONG;
     string ret_struct_name = "";
+    TypeInfo return_ti;
     bool has_explicit_ret_type = false;
     bool is_ret_nullable = false;
     if (consume(tokens, (Token::Type)':').type != Token::NONE ||
         consume(tokens, Token::TK_ARROW).type != Token::NONE) {
         has_explicit_ret_type = true;
         TypeInfo ret_ti = parse_type(tokens);
+        return_ti = ret_ti;
         ret_type = ret_ti.base_type;
         is_ret_nullable = ret_ti.is_nullable;
         if (ret_ti.is_array()) {
@@ -579,8 +584,10 @@ Function *Parser::parse_function(vector<Token> &tokens) {
         }
     }
     auto block = parse_block(tokens);
-    return new Function(id_token.id, declargs, block, ret_type, ret_struct_name,
-                        has_explicit_ret_type, is_ret_nullable);
+    auto function = new Function(id_token.id, declargs, block, ret_type, ret_struct_name,
+                                 has_explicit_ret_type, is_ret_nullable);
+    function->setReturnTypeInfo(return_ti);
+    return function;
 }
 
 vector<DeclVar *> Parser::parse_declargs(vector<Token> &tokens) {
@@ -631,7 +638,7 @@ DeclVar *Parser::parse_declparam(vector<Token> &tokens) {
     if (ti.base_type == VarType::STRUCT) {
         return new DeclVar(id_token.id, VarType::STRUCT, is_const, ti.type_name, false, ti);
     }
-    return new DeclVar(id_token.id, ti.base_type, is_const, "", false, ti);
+    return new DeclVar(id_token.id, ti.base_type, is_const, "", ti.is_nullable, ti);
 }
 
 DeclVar *Parser::parse_declvar(vector<Token> &tokens) {
@@ -876,13 +883,13 @@ Statement *Parser::parse_declvarst(vector<Token> &tokens) {
             throw ParseError("expected expression after '='", tokens[_pos]);
         if (consume(tokens, (Token::Type)';').type == Token::NONE)
             throw ParseError("expected ';'", tokens[_pos]);
-        return new DeclVarSt(new InitializedDeclVar(id_token.id, vtype, is_const, init, "", false, ti));
+        return new DeclVarSt(new InitializedDeclVar(id_token.id, vtype, is_const, init, "", ti.is_nullable, ti));
     }
     if (is_const)
         throw ParseError("'let' declaration requires an initializer", tokens[_pos]);
     if (consume(tokens, (Token::Type)';').type == Token::NONE)
         throw ParseError("expected ';'", tokens[_pos]);
-    return new DeclVarSt(new DeclVar(id_token.id, vtype, false, "", false, ti));
+    return new DeclVarSt(new DeclVar(id_token.id, vtype, false, "", ti.is_nullable, ti));
 }
 
 Statement *Parser::parse_statement(vector<Token> &tokens) {

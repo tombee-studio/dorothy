@@ -898,6 +898,15 @@ static void emit_class_constructor(LLVMGenCtx& ctx, const string& cname, const C
         ctx.out << "  store " << tstr << " " << param_reg << ", ptr " << ptr << "\n";
         ctx.vars[p.first] = ptr;
         ctx.var_types[p.first] = p.second;
+        const auto &decls = cdef.constructor->param_decls;
+        if (flat_idx <= (int)decls.size()) {
+            auto decl = decls[flat_idx - 1];
+            if (p.second == VarType::CLASS) {
+                ctx.class_var_types[p.first] = decl->getClassName();
+                ctx.class_var_nullable[p.first] = decl->isNullable();
+            }
+            if (p.second == VarType::ARRAY) ctx.array_var_typeinfo[p.first] = decl->getTypeInfo();
+        }
         if (p.second == VarType::CLASS) {
             ctx.out << "  call void @_dorothy_retain(ptr " << param_reg << ")\n";
             ctx.register_class_var(ptr);
@@ -1356,6 +1365,7 @@ void DeclVar::llvm_param(LLVMGenCtx& ctx, const string& param_reg) {
     ctx.out << "  store " << tstr << " " << param_reg << ", ptr " << ptr << "\n";
     ctx.vars[_id] = ptr;
     ctx.var_types[_id] = _type;
+    if (_type == VarType::ARRAY) ctx.array_var_typeinfo[_id] = _type_info;
     if (_type == VarType::CLASS) {
         ctx.class_var_types[_id] = _struct_name;
         ctx.class_var_nullable[_id] = _is_nullable;
@@ -1599,7 +1609,7 @@ prepareCallArgs(LLVMGenCtx& ctx, const std::string& id,
             VarType src_c = args[i]->llvm_etype(ctx);
             if (pit != ctx.func_param_info.end() && i < (int)pit->second.size()) {
                 VarType tgt = pit->second[i].type;
-                if (tgt == VarType::CLASS || tgt == VarType::STRING) {
+                if (tgt == VarType::CLASS || tgt == VarType::STRING || tgt == VarType::ARRAY) {
                     string r = ctx.fresh("arg.ptr");
                     ctx.out << "  " << r << " = inttoptr i64 " << val << " to ptr\n";
                     result.push_back({"ptr", r});
@@ -1949,7 +1959,7 @@ static string emitCmp(LLVMGenCtx& ctx, Expression* left, Expression* right,
     VarType et = promote_canonical(lt, rt);
     string cmp = ctx.fresh("cmp");
     string reg = ctx.fresh();
-    if (et == VarType::STRING) {
+    if (et == VarType::STRING && !dynamic_cast<NullExp *>(left) && !dynamic_cast<NullExp *>(right)) {
         string l_ptr = ctx.fresh("str.cmp.l");
         string r_ptr = ctx.fresh("str.cmp.r");
         ctx.out << "  " << l_ptr << " = inttoptr i64 " << l << " to ptr\n";
@@ -2192,7 +2202,7 @@ string Variable::llvm_rval(LLVMGenCtx& ctx) {
         throw CompileError(("undefined variable: " + _id).c_str());
     }
     VarType declared = llvm_declared_type(ctx);
-    if (declared == VarType::CLASS || declared == VarType::STRING) {
+    if (declared == VarType::CLASS || declared == VarType::STRING || declared == VarType::ARRAY) {
         string reg = ctx.fresh(_id + ".ptr");
         ctx.out << "  " << reg << " = load ptr, ptr " << it->second << "\n";
         string int_reg = ctx.fresh(_id + ".i64");
@@ -2458,7 +2468,7 @@ string ClassInit::llvm_rval(LLVMGenCtx& ctx) {
             VarType ac = _args[i]->llvm_etype(ctx);
             if (i < (int)cdef.constructor->params.size()) {
                 VarType pt = cdef.constructor->params[i].second;
-                if (pt == VarType::CLASS || pt == VarType::STRING) {
+                if (pt == VarType::CLASS || pt == VarType::STRING || pt == VarType::ARRAY) {
                     string r = ctx.fresh("ctor.ptr");
                     ctx.out << "  " << r << " = inttoptr i64 " << aval << " to ptr\n";
                     ctor_args.push_back({"ptr", r});
@@ -2647,7 +2657,7 @@ string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
         VarType ac = _args[i]->llvm_etype(ctx);
         if (i < (int)minfo->params.size()) {
             VarType pt = minfo->params[i]->getType();
-            if (pt == VarType::CLASS || pt == VarType::STRING) {
+            if (pt == VarType::CLASS || pt == VarType::STRING || pt == VarType::ARRAY) {
                 string r = ctx.fresh("arg.ptr");
                 ctx.out << "  " << r << " = inttoptr i64 " << aval << " to ptr\n";
                 call_args.push_back({"ptr", r});

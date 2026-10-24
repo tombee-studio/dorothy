@@ -33,6 +33,9 @@ class TypeChecker {
 
  public:
     // Run static type checking on the entire program.
-    // Throws TypeCheckError on type mismatch in return statements or constant assignment.
+    // Nullability violations throw CompileError; other type errors throw TypeCheckError.
     void check(const vector<Function *> &program);
 };
+
+// Mandatory source-level nullability analysis, before either backend runs.
+void check_null_safety(const vector<Function *> &program);

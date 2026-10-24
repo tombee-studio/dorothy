@@ -165,9 +165,7 @@ TEST(StringTest, TypecheckerRejectIntToString) {
         "    return 0;\n"
         "}"
     );
-    auto program = parser.parse(tokens);
-    TypeChecker tc;
-    EXPECT_THROW(tc.check(program), TypeCheckError);
+    EXPECT_THROW(parser.parse(tokens), CompileError);
 }
 
 // =======================================================

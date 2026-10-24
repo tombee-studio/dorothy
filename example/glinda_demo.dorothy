@@ -60,8 +60,10 @@ class RectRendererComponent: Component {
     override func update() {}
 
     override func render(ren: long) {
+        var entityRef: Entity? = this.entity;
+        if (entityRef == null) { return 0; }
         let tName: string = "Transform";
-        let t: TransformComponent? = this.entity.getComponent(tName);
+        var t: TransformComponent? = entityRef.getComponent(tName);
         if (t != null) {
             glinda_draw_rect(ren, t.x, t.y, t.width, t.height, this.r, this.g, this.b, 255);
         }
@@ -87,8 +89,10 @@ class BouncingPhysicsComponent: Component {
     override func init() {}
 
     override func update() {
+        var entityRef: Entity? = this.entity;
+        if (entityRef == null) { return 0; }
         let tName: string = "Transform";
-        let t: TransformComponent? = this.entity.getComponent(tName);
+        var t: TransformComponent? = entityRef.getComponent(tName);
         if (t != null) {
             if (t.x <= 0) {
                 t.x = 0;
@@ -139,11 +143,13 @@ class PlayerControllerComponent: Component {
     override func init() {}
 
     override func update() {
+        var entityRef: Entity? = this.entity;
+        if (entityRef == null) { return 0; }
         var numkeys: int = 0;
         let state: long = SDL_GetKeyboardState(numkeys);
         if (state != 0) {
             let tName: string = "Transform";
-            let t: TransformComponent? = this.entity.getComponent(tName);
+            var t: TransformComponent? = entityRef.getComponent(tName);
             if (t != null) {
                 // SDL_SCANCODE_LEFT = 80, SDL_SCANCODE_A = 4
                 var left_pressed: int = 0;
