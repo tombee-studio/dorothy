@@ -438,7 +438,10 @@ MIT License
 In a derived constructor, `super(...)` calls the immediate base class constructor
 on the same instance. In a derived constructor or method, `super.method(...)`
 calls the parent's implementation directly, bypassing the instance's vtable.
-Inherited implementations are resolved to the class that defines them. Virtual
+Inherited implementations are resolved to the class that defines them. Floating-point
+methods preserve their fractional return values through both virtual and `super`
+calls; `float` and `double` method results use the canonical `double` computation
+type. Virtual
 calls made by the parent implementation still dispatch on the original instance.
 
 ```dorothy

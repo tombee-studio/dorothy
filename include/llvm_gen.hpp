@@ -41,6 +41,7 @@ struct LLVMGenCtx {
     std::set<std::string> func_return_class;               // func -> returns class
     std::vector<std::string> sret_field_ptrs;  // ptr regs for sret params
     std::string current_ret_struct;            // struct name if current func returns struct
+    VarType current_method_ret_type = VarType::LONG; // canonical class method return ABI
     bool current_ret_is_class = false;         // true if current func returns class
     // nested struct support: var -> (dotted-path -> struct_name)
     std::map<std::string, std::map<std::string, std::string>> struct_subfield_types;

@@ -486,6 +486,16 @@ void Parser::parse_class_def(vector<Token> &tokens) {
             if (is_override && existing_vtable_idx < 0) {
                 throw ParseError("method '" + mname.id + "' marked override does not override any base class method", mname);
             }
+            if (existing_vtable_idx >= 0) {
+                auto inherited = cdef.vtable_methods[existing_vtable_idx];
+                if (is_float_type(inherited->ret_type) != is_float_type(ret_type))
+                    throw ParseError("override must preserve the floating-point return ABI", mname);
+                if (inherited->params.size() == params_decl.size()) {
+                    for (size_t i = 0; i < params_decl.size(); ++i)
+                        if (llvm_type_str(inherited->params[i]->getType()) != llvm_type_str(params_decl[i]->getType()))
+                            throw ParseError("override must preserve parameter ABI types", mname);
+                }
+            }
 
             auto *minfo = new MethodInfo();
             minfo->name = mname.id;

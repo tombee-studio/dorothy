@@ -868,6 +868,7 @@ static void emit_class_constructor(LLVMGenCtx& ctx, const string& cname, const C
     ctx.sret_field_ptrs.clear();
     ctx.current_ret_struct.clear();
     ctx.current_ret_is_class = false;
+    ctx.current_method_ret_type = VarType::LONG;
     ctx.terminated = false;
     ctx.current_function = cname + ".constructor";
     ctx.scopes.clear();
@@ -937,12 +938,14 @@ static void emit_class_method(LLVMGenCtx& ctx, const string& cname, MethodInfo* 
     ctx.sret_field_ptrs.clear();
     ctx.current_ret_struct = (m->ret_type == VarType::STRUCT) ? m->ret_type_name : "";
     ctx.current_ret_is_class = (m->ret_type == VarType::CLASS);
+    ctx.current_method_ret_type = canonical_type(m->ret_type);
     ctx.terminated = false;
     ctx.current_function = cname + "." + m->name;
     ctx.scopes.clear();
     ctx.push_scope();
 
-    string ret_llvm = (m->ret_type == VarType::STRUCT) ? "void" : "i64";
+    string ret_llvm = (m->ret_type == VarType::STRUCT) ? "void" :
+                      (is_float_type(m->ret_type) ? "double" : "i64");
 
     vector<pair<string, string>> fn_params;
     fn_params.push_back({"ptr", "%this"});
@@ -971,7 +974,7 @@ static void emit_class_method(LLVMGenCtx& ctx, const string& cname, MethodInfo* 
         if (m->ret_type == VarType::STRUCT) {
             ctx.out << "  ret void\n";
         } else {
-            ctx.out << "  ret " << ret_llvm << " 0\n";
+            ctx.out << "  ret " << ret_llvm << (is_float_type(m->ret_type) ? " 0.0\n" : " 0\n");
         }
     }
     ctx.out << "}\n\n";
@@ -1563,9 +1566,17 @@ void ReturnSt::llvm_emit(LLVMGenCtx& ctx) {
         ctx.out << "  call void @_dorothy_retain(ptr " << ret_ptr << ")\n";
     }
 
+    if (is_float_type(ctx.current_method_ret_type)) {
+        val = llvm_coerce(ctx, val, etype, VarType::DOUBLE);
+        ctx.emit_release_all_scopes();
+        ctx.out << "  ret double " << val << "\n";
+        ctx.terminated = true;
+        return;
+    }
+
     ctx.emit_release_all_scopes();
 
-    // All non-main functions return i64; convert float if needed
+    // Non-floating methods and non-main functions return i64.
     if (is_float_type(etype)) {
         string conv = ctx.fresh("ret.i64");
         ctx.out << "  " << conv << " = fptosi double " << val << " to i64\n";
@@ -1708,6 +1719,7 @@ void Function::llvm_emit(LLVMGenCtx& ctx) {
     ctx.sret_field_ptrs.clear();
     ctx.current_ret_struct = (_ret_type == VarType::STRUCT) ? _ret_struct_name : "";
     ctx.current_ret_is_class = (_ret_type == VarType::CLASS);
+    ctx.current_method_ret_type = VarType::LONG;
     ctx.terminated = false;
     ctx.current_function = _id;
     ctx.scopes.clear();
@@ -1905,7 +1917,7 @@ static string emitBinOp(LLVMGenCtx& ctx, Expression* left, Expression* right,
         if (lt != VarType::DOUBLE) l = llvm_promote_to_double(ctx, l, lt);
         if (rt != VarType::DOUBLE) r = llvm_promote_to_double(ctx, r, rt);
         string reg = ctx.fresh();
-        ctx.out << "  " << reg << " = fop " << "double " << l << ", " << r << "\n";
+        ctx.out << "  " << reg << " = " << fop << " double " << l << ", " << r << "\n";
         return reg;
     }
     string reg = ctx.fresh();
@@ -2643,7 +2655,8 @@ string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
     }
 
     // Build signature and call
-    string ret_str = (minfo->ret_type == VarType::STRUCT) ? "void" : "i64";
+    string ret_str = (minfo->ret_type == VarType::STRUCT) ? "void" :
+                     (is_float_type(minfo->ret_type) ? "double" : "i64");
     string fn_sig = ret_str + " (ptr";
     for (auto* p : minfo->params) {
         fn_sig += ", " + llvm_type_str(p->getType());
