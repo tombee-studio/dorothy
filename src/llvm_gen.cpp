@@ -587,6 +587,16 @@ static vector<LeafField> get_leaf_fields(const string& struct_name, const string
     return result;
 }
 
+static string struct_storage_type(const string &name) {
+    string result = "{ ";
+    auto leaves = get_leaf_fields(name);
+    for (size_t i = 0; i < leaves.size(); ++i) {
+        if (i) result += ", ";
+        result += llvm_type_str(leaves[i].type);
+    }
+    return result + " }";
+}
+
 // Resolve the VarType at a dotted path within a struct hierarchy.
 static VarType resolve_path_field_type(const string& struct_name, const string& path) {
     size_t dot = path.find('.');
@@ -742,80 +752,135 @@ void LLVMGenCtx::emit_release_all_scopes() {
 
 // ===== Class resolution helpers =====
 
-static string resolve_expr_class_name(LLVMGenCtx& ctx, Expression* expr) {
-    if (!expr) return "";
-    if (auto super = dynamic_cast<SuperExpr *>(expr)) return super->getBaseClass();
-    if (dynamic_cast<ThisExpr*>(expr)) {
-        return ctx.this_class;
+// Resolve the complete receiver expression, including mixed struct/class paths.
+// Looking up only getVarName() loses the type of every nested field.
+static TypeInfo resolve_expr_type(LLVMGenCtx &ctx, const Expression *expr) {
+    auto make_type = [](VarType type, const string &name = "") {
+        return TypeInfo{type, name, false, {}};
+    };
+    if (!expr) return make_type(VarType::LONG);
+    if (auto super = dynamic_cast<const SuperExpr *>(expr))
+        return make_type(VarType::CLASS, super->getBaseClass());
+    if (dynamic_cast<const ThisExpr *>(expr)) {
+        if (!ctx.this_class.empty()) return make_type(VarType::CLASS, ctx.this_class);
+        string root = ctx.this_var.empty() ? "$this" : ctx.this_var;
+        auto it = ctx.struct_var_types.find(root);
+        if (it != ctx.struct_var_types.end()) return make_type(VarType::STRUCT, it->second);
     }
-    auto* ma = dynamic_cast<MemberAccess*>(expr);
-    if (ma) {
-        string parent_class = resolve_expr_class_name(ctx, ma->getObject());
-        if (!parent_class.empty() && g_class_defs.count(parent_class)) {
-            int idx = g_class_defs[parent_class].fieldIndex(ma->getMember());
-            if (idx >= 0) {
-                const auto& field = g_class_defs[parent_class].fields[idx];
-                if (field.type == VarType::CLASS) {
-                    return field.struct_name;
-                }
+    if (auto variable = dynamic_cast<const Variable *>(expr)) {
+        const string &name = variable->getVarName();
+        if (ctx.class_var_types.count(name)) return make_type(VarType::CLASS, ctx.class_var_types.at(name));
+        if (ctx.struct_var_types.count(name)) return make_type(VarType::STRUCT, ctx.struct_var_types.at(name));
+        if (ctx.array_var_typeinfo.count(name)) return ctx.array_var_typeinfo.at(name);
+        auto it = ctx.var_types.find(name);
+        if (it != ctx.var_types.end()) return make_type(it->second);
+    }
+    if (auto member = dynamic_cast<const MemberAccess *>(expr)) {
+        auto object = resolve_expr_type(ctx, member->getObject());
+        if (object.base_type == VarType::ARRAY &&
+            (member->getMember() == "length" || member->getMember() == "size"))
+            return make_type(VarType::LONG);
+        const vector<FieldInfo> *fields = nullptr;
+        if (object.base_type == VarType::CLASS && g_class_defs.count(object.type_name))
+            fields = &g_class_defs.at(object.type_name).fields;
+        if (object.base_type == VarType::STRUCT && g_struct_defs.count(object.type_name))
+            fields = &g_struct_defs.at(object.type_name).fields;
+        if (fields) {
+            for (const auto &field : *fields) {
+                if (field.name != member->getMember()) continue;
+                auto result = field.type_info;
+                result.base_type = field.type;
+                if (result.type_name.empty()) result.type_name = field.struct_name;
+                result.is_nullable = field.is_nullable;
+                return result;
             }
+            throw CompileError(("no field '" + member->getMember() + "' in " + object.type_name).c_str());
         }
-        return "";
+        throw CompileError(("cannot access field '" + member->getMember() + "' on a primitive receiver").c_str());
     }
-    auto* var_expr = dynamic_cast<Variable*>(expr);
-    if (var_expr) {
-        const string& varname = var_expr->getVarName();
-        if (varname == "$this" || varname == "this") return ctx.this_class;
-        auto it = ctx.class_var_types.find(varname);
-        if (it != ctx.class_var_types.end()) return it->second;
+    if (auto index = dynamic_cast<const ArrayIndex *>(expr)) {
+        auto array = resolve_expr_type(ctx, index->getPointer());
+        if (array.base_type == VarType::ARRAY) return array.get_element_type();
     }
-    auto* cme = dynamic_cast<CallMethodExp*>(expr);
-    if (cme) {
-        string parent_class = resolve_expr_class_name(ctx, cme->getObject());
-        if (!parent_class.empty() && g_class_defs.count(parent_class)) {
-            auto* minfo = g_class_defs[parent_class].getMethod(cme->getMethodName());
-            if (minfo && minfo->ret_type == VarType::CLASS) {
-                return minfo->ret_type_name;
-            }
-        }
-    }
-    auto* ci = dynamic_cast<ClassInit*>(expr);
-    if (ci) {
-        return ci->getClassName();
-    }
-    auto* ai = dynamic_cast<ArrayIndex*>(expr);
-    if (ai && ai->getPointer()) {
-        const string& vname = ai->getPointer()->getVarName();
-        auto it = ctx.array_var_typeinfo.find(vname);
-        if (it != ctx.array_var_typeinfo.end()) {
-            TypeInfo elem_ti = it->second.get_element_type();
-            if (elem_ti.base_type == VarType::CLASS || !elem_ti.type_name.empty()) {
-                return elem_ti.type_name;
-            }
-        }
-        auto* ma = dynamic_cast<MemberAccess*>(ai->getPointer());
-        if (ma) {
-            string parent_class = resolve_expr_class_name(ctx, ma->getObject());
-            if (!parent_class.empty() && g_class_defs.count(parent_class)) {
-                int idx = g_class_defs[parent_class].fieldIndex(ma->getMember());
-                if (idx >= 0) {
-                    const auto& field = g_class_defs[parent_class].fields[idx];
-                    if (field.type == VarType::ARRAY) {
-                        string inner;
-                        if (field.struct_name.rfind("Array<", 0) == 0 && field.struct_name.back() == '>') {
-                            inner = field.struct_name.substr(6, field.struct_name.length() - 7);
-                        } else if (field.struct_name.length() > 2 && field.struct_name.substr(field.struct_name.length() - 2) == "[]") {
-                            inner = field.struct_name.substr(0, field.struct_name.length() - 2);
-                        }
-                        if (!inner.empty() && g_class_defs.count(inner)) {
-                            return inner;
-                        }
-                    }
-                }
+    if (auto call = dynamic_cast<const CallMethodExp *>(expr)) {
+        auto receiver = resolve_expr_type(ctx, call->getObject());
+        if (receiver.base_type == VarType::CLASS && g_class_defs.count(receiver.type_name)) {
+            auto method = g_class_defs.at(receiver.type_name).getMethod(call->getMethodName());
+            if (method) {
+                auto result = make_type(method->ret_type, method->ret_type_name);
+                result.is_nullable = method->is_ret_nullable;
+                return result;
             }
         }
     }
-    return "";
+    if (auto init = dynamic_cast<const ClassInit *>(expr)) return make_type(VarType::CLASS, init->getClassName());
+    if (auto init = dynamic_cast<const StructInit *>(expr)) return make_type(VarType::STRUCT, init->getStructName());
+    if (dynamic_cast<const StringExp *>(expr)) return make_type(VarType::STRING);
+    if (dynamic_cast<const FloatExp *>(expr)) return make_type(VarType::DOUBLE);
+    return make_type(VarType::LONG);
+}
+
+static string resolve_expr_class_name(LLVMGenCtx &ctx, const Expression *expr) {
+    auto type = resolve_expr_type(ctx, expr);
+    return type.base_type == VarType::CLASS ? type.type_name : "";
+}
+
+// Select the actual flattened leaf addresses of a value receiver. A nested
+// struct aliases its owner's storage; it is never copied for a method call.
+static map<string, string> struct_receiver_fields(LLVMGenCtx &ctx, Expression *expr) {
+    auto receiver = resolve_expr_type(ctx, expr);
+    if (receiver.base_type != VarType::STRUCT || !g_struct_defs.count(receiver.type_name))
+        throw CompileError("method receiver is not a struct value");
+    auto leaves = get_leaf_fields(receiver.type_name);
+    map<string, string> result;
+    if (dynamic_cast<Variable *>(expr) || dynamic_cast<ThisExpr *>(expr)) {
+        string root = expr->getVarName();
+        if (dynamic_cast<ThisExpr *>(expr)) root = ctx.this_var.empty() ? "$this" : ctx.this_var;
+        auto found = ctx.struct_field_ptrs.find(root);
+        if (found == ctx.struct_field_ptrs.end() && !leaves.empty())
+            throw CompileError("cannot locate struct receiver storage");
+        for (const auto &leaf : leaves) {
+            auto field = found->second.find(leaf.path);
+            if (field == found->second.end()) throw CompileError("missing struct receiver field storage");
+            result[leaf.path] = field->second;
+        }
+        return result;
+    }
+    if (auto member = dynamic_cast<MemberAccess *>(expr)) {
+        auto parent = resolve_expr_type(ctx, member->getObject());
+        if (parent.base_type == VarType::STRUCT) {
+            auto parent_fields = struct_receiver_fields(ctx, member->getObject());
+            for (const auto &leaf : leaves) {
+                string key = member->getMember() + "." + leaf.path;
+                auto field = parent_fields.find(key);
+                if (field == parent_fields.end()) throw CompileError("missing nested struct receiver field storage");
+                result[leaf.path] = field->second;
+            }
+            return result;
+        }
+        if (parent.base_type == VarType::CLASS && g_class_defs.count(parent.type_name)) {
+            const auto &definition = g_class_defs.at(parent.type_name);
+            int field = definition.fieldIndex(member->getMember());
+            string value = member->getObject()->llvm_rval(ctx);
+            string object = ctx.fresh("receiver.object");
+            ctx.out << "  " << object << " = inttoptr i64 " << value << " to ptr\n";
+            ctx.out << "  call void @_dorothy_check_null(ptr " << object << ")\n";
+            string slot = ctx.fresh("receiver.slot");
+            ctx.out << "  " << slot << " = getelementptr %class." << parent.type_name
+                    << ", ptr " << object << ", i32 0, i32 " << (field + 2) << "\n";
+            string storage = ctx.fresh("receiver.storage");
+            ctx.out << "  " << storage << " = load ptr, ptr " << slot << "\n";
+            string layout = struct_storage_type(receiver.type_name);
+            for (size_t i = 0; i < leaves.size(); ++i) {
+                string pointer = ctx.fresh("receiver.field");
+                ctx.out << "  " << pointer << " = getelementptr " << layout << ", ptr " << storage
+                        << ", i32 0, i32 " << i << "\n";
+                result[leaves[i].path] = pointer;
+            }
+            return result;
+        }
+    }
+    throw CompileError("struct method receiver must be a variable, this, or a struct field");
 }
 
 static bool is_class_expr(LLVMGenCtx& ctx, Expression* expr) {
@@ -855,6 +920,27 @@ static void emit_class_destructor(LLVMGenCtx& ctx, const string& cname, const Cl
             ctx.out << "  " << child << " = load ptr, ptr " << fptr << "\n";
             ctx.out << "  call void @_dorothy_release(ptr " << child << ")\n";
         }
+    }
+    for (int fi = 0; fi < (int)cdef.fields.size(); ++fi) {
+        const auto &field = cdef.fields[fi];
+        if (field.type != VarType::STRUCT) continue;
+        string slot = ctx.fresh("dtor.struct.slot");
+        ctx.out << "  " << slot << " = getelementptr %class." << cname
+                << ", ptr %this, i32 0, i32 " << (fi + 2) << "\n";
+        string storage = ctx.fresh("dtor.struct");
+        ctx.out << "  " << storage << " = load ptr, ptr " << slot << "\n";
+        auto leaves = get_leaf_fields(field.struct_name);
+        string layout = struct_storage_type(field.struct_name);
+        for (size_t i = 0; i < leaves.size(); ++i) {
+            if (leaves[i].type != VarType::CLASS) continue;
+            string pointer = ctx.fresh("dtor.struct.field");
+            ctx.out << "  " << pointer << " = getelementptr " << layout << ", ptr " << storage
+                    << ", i32 0, i32 " << i << "\n";
+            string child = ctx.fresh("dtor.struct.child");
+            ctx.out << "  " << child << " = load ptr, ptr " << pointer << "\n";
+            ctx.out << "  call void @_dorothy_release(ptr " << child << ")\n";
+        }
+        ctx.out << "  call void @free(ptr " << storage << ")\n";
     }
     ctx.out << "  call void @free(ptr %this)\n";
     ctx.out << "  ret void\n";
@@ -2090,6 +2176,8 @@ string MemberAccess::llvm_rval(LLVMGenCtx& ctx) {
         int fidx = cdef.fieldIndex(_member);
         if (fidx < 0) throw CompileError(("no field '" + _member + "' in class " + cname).c_str());
         VarType ftype = cdef.fields[fidx].type;
+        if (cdef.fields[fidx].type == VarType::STRUCT)
+            throw CompileError("struct fields must be accessed or assigned field-by-field");
         string fptr = ctx.fresh("field.ptr");
         ctx.out << "  " << fptr << " = getelementptr %class." << cname
                 << ", ptr " << obj_ptr << ", i32 0, i32 " << (fidx + 2) << "\n";
@@ -2106,16 +2194,21 @@ string MemberAccess::llvm_rval(LLVMGenCtx& ctx) {
         return llvm_to_canonical(ctx, reg, ftype);
     }
 
-    // Struct field
-    string varname = resolve_struct_var(ctx, _object->getVarName());
-    string path = getFieldPath();
-    string ptr = ctx.struct_field_ptrs[varname][path];
-    if (ptr.empty())
-        throw CompileError(("struct field '" + path + "' is a struct type and cannot be used as a primitive value").c_str());
-    VarType ftype = member_field_type(ctx, varname, path);
-    string tstr = llvm_type_str(ftype);
-    string reg = ctx.fresh(varname + "_" + path);
-    ctx.out << "  " << reg << " = load " << tstr << ", ptr " << ptr << "\n";
+    auto object = resolve_expr_type(ctx, _object);
+    if (object.base_type != VarType::STRUCT)
+        throw CompileError(("cannot access field '" + _member + "' on a primitive receiver").c_str());
+    auto fields = struct_receiver_fields(ctx, _object);
+    auto pointer = fields.find(_member);
+    if (pointer == fields.end())
+        throw CompileError(("struct field '" + _member + "' is a struct type and cannot be used as a primitive value").c_str());
+    VarType ftype = resolve_expr_type(ctx, this).base_type;
+    string reg = ctx.fresh("struct.field");
+    ctx.out << "  " << reg << " = load " << llvm_type_str(ftype) << ", ptr " << pointer->second << "\n";
+    if (ftype == VarType::CLASS || ftype == VarType::STRING || ftype == VarType::ARRAY) {
+        string value = ctx.fresh("field.i64");
+        ctx.out << "  " << value << " = ptrtoint ptr " << reg << " to i64\n";
+        return value;
+    }
     return llvm_to_canonical(ctx, reg, ftype);
 }
 
@@ -2142,44 +2235,26 @@ string MemberAccess::llvm_lval(LLVMGenCtx& ctx) {
         const auto& cdef = g_class_defs[cname];
         int fidx = cdef.fieldIndex(_member);
         if (fidx < 0) throw CompileError(("no field '" + _member + "' in class " + cname).c_str());
+        if (cdef.fields[fidx].type == VarType::STRUCT)
+            throw CompileError("struct fields must be accessed or assigned field-by-field");
         string fptr = ctx.fresh("field.ptr");
         ctx.out << "  " << fptr << " = getelementptr %class." << cname
                 << ", ptr " << obj_ptr << ", i32 0, i32 " << (fidx + 2) << "\n";
         return fptr;
     }
 
-    // Struct field
-    string varname = resolve_struct_var(ctx, _object->getVarName());
-    string path = getFieldPath();
-    string ptr = ctx.struct_field_ptrs[varname][path];
-    if (ptr.empty())
-        throw CompileError(("struct field '" + path + "' is a struct type; assign field-by-field").c_str());
-    return ptr;
+    auto object = resolve_expr_type(ctx, _object);
+    if (object.base_type != VarType::STRUCT)
+        throw CompileError(("cannot access field '" + _member + "' on a primitive receiver").c_str());
+    auto fields = struct_receiver_fields(ctx, _object);
+    auto pointer = fields.find(_member);
+    if (pointer == fields.end())
+        throw CompileError(("struct field '" + _member + "' is a struct type; assign field-by-field").c_str());
+    return pointer->second;
 }
 
 VarType MemberAccess::llvm_declared_type(LLVMGenCtx& ctx) const {
-    if (_member == "length" || _member == "size") {
-        auto* var_expr_check = dynamic_cast<Variable*>(_object);
-        if (var_expr_check && ctx.var_types.count(var_expr_check->getVarName()) && ctx.var_types[var_expr_check->getVarName()] == VarType::ARRAY) {
-            return VarType::LONG;
-        }
-        if (_object->llvm_declared_type(ctx) == VarType::ARRAY) {
-            return VarType::LONG;
-        }
-    }
-    string obj_var = _object->getVarName();
-    if (!obj_var.empty() && ctx.var_types.count(obj_var) && ctx.var_types[obj_var] == VarType::ARRAY) {
-        if (_member == "length" || _member == "size") {
-            return VarType::LONG;
-        }
-    }
-    string cname = resolve_expr_class_name(ctx, _object);
-    if (!cname.empty() && g_class_defs.count(cname)) {
-        int idx = g_class_defs[cname].fieldIndex(_member);
-        if (idx >= 0) return g_class_defs[cname].fields[idx].type;
-    }
-    string varname = resolve_struct_var(ctx, _object->getVarName());
-    return member_field_type(ctx, varname, getFieldPath());
+    return resolve_expr_type(ctx, this).base_type;
 }
 
 VarType MemberAccess::llvm_etype(LLVMGenCtx& ctx) const {
@@ -2481,7 +2556,26 @@ string ClassInit::llvm_rval(LLVMGenCtx& ctx) {
         string tstr = llvm_type_str(cdef.fields[fi].type);
         ctx.out << "  " << fptr << " = getelementptr %class." << _class_name
                 << ", ptr " << raw_mem << ", i32 0, i32 " << (fi + 2) << "\n";
-        if (is_float_type(cdef.fields[fi].type)) {
+        if (cdef.fields[fi].type == VarType::STRUCT) {
+            const string &name = cdef.fields[fi].struct_name;
+            string layout = struct_storage_type(name);
+            string end = ctx.fresh("struct.end");
+            string size = ctx.fresh("struct.size");
+            string storage = ctx.fresh("struct.storage");
+            ctx.out << "  " << end << " = getelementptr " << layout << ", ptr null, i32 1\n";
+            ctx.out << "  " << size << " = ptrtoint ptr " << end << " to i64\n";
+            ctx.out << "  " << storage << " = call ptr @malloc(i64 " << size << ")\n";
+            ctx.out << "  store ptr " << storage << ", ptr " << fptr << "\n";
+            auto leaves = get_leaf_fields(name);
+            for (size_t i = 0; i < leaves.size(); ++i) {
+                string pointer = ctx.fresh("struct.init.field");
+                string type = llvm_type_str(leaves[i].type);
+                ctx.out << "  " << pointer << " = getelementptr " << layout << ", ptr " << storage
+                        << ", i32 0, i32 " << i << "\n";
+                string zero = is_float_type(leaves[i].type) ? "0.0" : type == "ptr" ? "null" : "0";
+                ctx.out << "  store " << type << " " << zero << ", ptr " << pointer << "\n";
+            }
+        } else if (is_float_type(cdef.fields[fi].type)) {
             ctx.out << "  store " << tstr << " 0.0, ptr " << fptr << "\n";
         } else if (cdef.fields[fi].type == VarType::CLASS || cdef.fields[fi].type == VarType::STRING || cdef.fields[fi].type == VarType::ARRAY) {
             ctx.out << "  store ptr null, ptr " << fptr << "\n";
@@ -2738,6 +2832,15 @@ string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
 
     if (ret_str == "void") return "0";
     return call_res;
+}
+
+VarType CallMethodExp::llvm_declared_type(LLVMGenCtx &ctx) const {
+    auto receiver = resolve_expr_type(ctx, _object);
+    if (receiver.base_type == VarType::CLASS && g_class_defs.count(receiver.type_name)) {
+        auto method = g_class_defs.at(receiver.type_name).getMethod(_method_name);
+        if (method) return method->ret_type;
+    }
+    return VarType::LONG;
 }
 
 // ===== CallMethodSt =====

@@ -1255,30 +1255,6 @@ void CallMethodExp::lcompile(vector<Code>&, map<string, int>&, map<string, int>&
     throw CompileError("cannot use method call as lvalue");
 }
 
-VarType CallMethodExp::llvm_declared_type(LLVMGenCtx& ctx) const {
-    string struct_var = dynamic_cast<ThisExpr *>(_object) ? ctx.this_var : _object->getVarName();
-    if (ctx.struct_var_types.count(struct_var)) {
-        const auto &def = g_struct_defs.at(ctx.struct_var_types.at(struct_var));
-        auto method = def.methods.find(_method_name);
-        if (method != def.methods.end()) return method->second->ret_type;
-    }
-    // Determine the return type of the method
-    string cname;
-    if (auto super = dynamic_cast<SuperExpr *>(_object)) {
-        cname = super->getBaseClass();
-    } else if (_object->getVarName() == "$this" && !ctx.this_class.empty()) {
-        cname = ctx.this_class;
-    } else {
-        auto it = ctx.class_var_types.find(_object->getVarName());
-        if (it != ctx.class_var_types.end()) cname = it->second;
-    }
-    if (!cname.empty() && g_class_defs.count(cname)) {
-        auto* minfo = g_class_defs[cname].getMethod(_method_name);
-        if (minfo) return minfo->ret_type;
-    }
-    return VarType::LONG;
-}
-
 VarType CallMethodExp::compile_type(map<string, int> &) const {
     auto receiver = g_var_struct_types.find(_object->getVarName());
     if (receiver == g_var_struct_types.end()) return VarType::LONG;
