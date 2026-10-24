@@ -34,6 +34,7 @@ test:
 			tests/gtest_parser.cpp \
 			tests/gtest_integration.cpp \
 			tests/gtest_struct.cpp \
+			tests/gtest_recursive_methods.cpp \
 			tests/gtest_class.cpp \
 			tests/gtest_glinda.cpp \
 			tests/gtest_typechecker.cpp \

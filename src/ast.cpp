@@ -167,63 +167,53 @@ void InitializedDeclVar::compile(vector<Code>& ofs, map<string, int>& vars,
             throw CompileError("struct variable must be initialized with struct literal or another struct variable");
         const auto& sdef = g_struct_defs[_struct_name];
 
-        // Set up 'this' context
+        // Constructors remain inline, but their receiver and parameter bindings
+        // must not replace an enclosing recursive method's call-frame bindings.
+        const auto ctor = sdef.constructor;
+        if (!ctor) return;
+        auto saved_vars = vars;
+        auto saved_types = g_var_struct_types;
+        string saved_this = g_this_struct;
         int before_params = vars["."];
-        vars["$this"] = vars[_id];
-        g_var_struct_types["$this"] = _struct_name;
-        string prev_this_struct = g_this_struct;
-        g_this_struct = _struct_name;
-
-        // Allocate constructor param slots and assign arg values (positional)
-        const auto& ctor = sdef.constructor;
-        if (ctor) {
-            const auto& call_args = si->getArgs();
-            for (int pi = 0; pi < (int)ctor->params.size(); pi++) {
-                const string& pname = ctor->params[pi].first;
-                VarType ptype = ctor->params[pi].second;
-                vars["."]++;
-                int pslot = vars["."];
-                vars[pname] = pslot;
-                vars["$t:" + pname] = (int)ptype;
+        int receiver_slot = vars.at(_id);
+        auto restore = [&]() {
+            vars = saved_vars; g_var_struct_types = saved_types; g_this_struct = saved_this;
+        };
+        try {
+            vector<int> slots;
+            for (int pi = 0; pi < (int)ctor->params.size(); ++pi) {
+                int slot = ++vars["."];
+                slots.push_back(slot);
                 ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
-                ofs.push_back(Code::makeCode(Code::PUSHI, pslot, 0));
+                ofs.push_back(Code::makeCode(Code::PUSHI, slot, 0));
                 ofs.push_back(Code::makeCode(Code::POP, 3, 0));
                 ofs.push_back(Code::makeCode(Code::SUB, 0, 0));
                 ofs.push_back(Code::makeCode(Code::MOVE, 1, 2));
-                ofs.push_back(Code::makeCode(Code::MOVEI, 3, 0));
+                // Evaluate against the caller before installing any constructor parameter.
+                si->getArgs().at(pi)->compile(ofs, vars, functions, offset);
+                ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
+                ofs.push_back(Code::makeCode(Code::PUSHI, slot, 0));
+                ofs.push_back(Code::makeCode(Code::POP, 3, 0));
+                ofs.push_back(Code::makeCode(Code::SUB, 0, 0));
+                ofs.push_back(Code::makeCode(Code::POP, 3, 0));
                 ofs.push_back(Code::makeCode(Code::STORE, 2, 3));
-                // Store positional arg value
-                if (pi < (int)call_args.size()) {
-                    call_args[pi]->compile(ofs, vars, functions, offset);
-                    ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
-                    ofs.push_back(Code::makeCode(Code::PUSHI, pslot, 0));
-                    ofs.push_back(Code::makeCode(Code::POP, 3, 0));
-                    ofs.push_back(Code::makeCode(Code::SUB, 0, 0));
-                    ofs.push_back(Code::makeCode(Code::POP, 3, 0));
-                    ofs.push_back(Code::makeCode(Code::STORE, 2, 3));
-                }
             }
-            // Execute constructor body inline
+            int param_end = vars["."];
+            vars.clear(); vars["."] = param_end; vars["$this"] = receiver_slot;
+            g_var_struct_types.clear(); g_var_struct_types["$this"] = _struct_name;
+            g_this_struct = _struct_name;
+            for (int pi = 0; pi < (int)slots.size(); ++pi) {
+                vars[ctor->params[pi].first] = slots[pi];
+                vars["$t:" + ctor->params[pi].first] = (int)ctor->params[pi].second;
+            }
             ctor->body->compile(ofs, vars, functions, offset);
-
-            // Clean up: reset SP to before params, remove param vars
-            for (const auto& param : ctor->params) {
-                const auto& pname = param.first;
-                vars.erase(pname);
-                vars.erase("$t:" + pname);
-            }
-            vars["."] = before_params;
             ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
             ofs.push_back(Code::makeCode(Code::PUSHI, before_params, 0));
             ofs.push_back(Code::makeCode(Code::POP, 3, 0));
             ofs.push_back(Code::makeCode(Code::SUB, 0, 0));
             ofs.push_back(Code::makeCode(Code::MOVE, 1, 2));
-        }
-
-        // Clean up 'this' context
-        vars.erase("$this");
-        g_var_struct_types.erase("$this");
-        g_this_struct = prev_this_struct;
+        } catch (...) { restore(); throw; }
+        restore();
         return;
     }
 
@@ -472,29 +462,46 @@ void Function::print(ostream& os, int tab) {
 
 void Function::compile(vector<Code>& ofs, map<string, int>& vars,
                        map<string, int>& functions, int offset) {
+    vector<DeclVar *> args = _args;
+    DeclVar receiver("$thisptr");
+    if (!_receiver_struct.empty()) args.insert(args.begin(), &receiver);
     vars.clear();
     vars["."] = 0;
     g_var_struct_types.clear();
     g_this_struct.clear();
     functions[_id] = ofs.size() - 1 + offset;
+    // Unresolved calls carry a negative relocation ID owned by this compilation's
+    // function table, so independent or failed compilations cannot share fixups.
+    auto pending = functions.find("$pending:" + _id);
+    if (pending != functions.end()) {
+        for (auto &code : ofs)
+            if (code.mnemonic == Code::CALL && code.op1 == pending->second)
+                code.op1 = functions[_id];
+        functions.erase(pending);
+    }
     ofs.push_back(Code::makeCode(Code::PUSHR, 0, 0));
     ofs.push_back(Code::makeCode(Code::MOVE, 0, 1));
-    if (_args.size() > 0) {
-        for (auto arg : _args) {
+    if (args.size() > 0) {
+        for (auto arg : args) {
             arg->compile(ofs, vars, functions, offset);
         }
-        for (int i = 0; i < _args.size(); i++) {
+        for (int i = 0; i < args.size(); i++) {
             ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
             ofs.push_back(Code::makeCode(Code::MOVEI, 3, i + 2));
             ofs.push_back(Code::makeCode(Code::ADD, 0, 0));
             ofs.push_back(Code::makeCode(Code::LOAD, 2, 2));
             ofs.push_back(Code::makeCode(Code::PUSHR, 2, 0));
             ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
-            ofs.push_back(Code::makeCode(Code::MOVEI, 3, _args.size() - i));
+            ofs.push_back(Code::makeCode(Code::MOVEI, 3, args.size() - i));
             ofs.push_back(Code::makeCode(Code::SUB, 0, 0));
             ofs.push_back(Code::makeCode(Code::POP, 3, 0));
             ofs.push_back(Code::makeCode(Code::STORE, 2, 3));
         }
+    }
+    if (!_receiver_struct.empty()) {
+        vars["$method-return-type"] = (int)_ret_type;
+        g_this_struct = _receiver_struct;
+        g_var_struct_types["$this"] = _receiver_struct;
     }
     _body->compile(ofs, vars, functions, offset);
     ofs.push_back(Code::makeCode(Code::PUSHI, 0, 0));
@@ -547,6 +554,10 @@ void ReturnSt::print(ostream& os, int tab) {
 
 void ReturnSt::compile(vector<Code>& ofs, map<string, int>& vars,
                        map<string, int>& functions, int offset) {
+    auto method_return = vars.find("$method-return-type");
+    if (method_return != vars.end() &&
+        is_float_type((VarType)method_return->second) != is_float_type(_exp->compile_type(vars)))
+        throw CompileError("VM struct methods require matching integer/floating return representations");
     _exp->compile(ofs, vars, functions, offset);
     ofs.push_back(Code::makeCode(Code::POP, 2, 0));
     ofs.push_back(Code::makeCode(Code::MOVE, 1, 0));
@@ -1096,6 +1107,16 @@ static void member_lcompile_impl(const string& varname, const string& path,
         throw CompileError(("not a struct variable: " + varname).c_str());
     const string& struct_name = type_it->second;
     int flat_idx = get_flat_index(struct_name, path);
+    if (varname == "$this" && vars.count("$thisptr")) {
+        map<string, int> unused;
+        Variable("$thisptr").compile(codes, vars, unused, 0);
+        codes.push_back(Code::makeCode(Code::POP, 2, 0));
+        codes.push_back(Code::makeCode(Code::PUSHI, flat_idx, 0));
+        codes.push_back(Code::makeCode(Code::POP, 3, 0));
+        codes.push_back(Code::makeCode(Code::SUB, 0, 0));
+        codes.push_back(Code::makeCode(Code::PUSHR, 2, 0));
+        return;
+    }
     int slot = vars.at(varname) + flat_idx;
     codes.push_back(Code::makeCode(Code::MOVE, 2, 0));
     codes.push_back(Code::makeCode(Code::PUSHI, slot, 0));
@@ -1198,8 +1219,36 @@ void CallMethodExp::print(ostream& os, int tab) {
     os << ")";
 }
 
-void CallMethodExp::compile(vector<Code>&, map<string, int>&, map<string, int>&, int) {
-    throw CompileError("methods are only supported in LLVM target");
+void CallMethodExp::compile(vector<Code>& codes, map<string, int>& vars,
+                            map<string, int>& functions, int offset) {
+    string receiver = _object->getVarName();
+    if ((!dynamic_cast<Variable *>(_object) && !dynamic_cast<ThisExpr *>(_object)) ||
+        !g_var_struct_types.count(receiver))
+        throw CompileError("VM method receiver must be a struct variable or this");
+    const auto &def = g_struct_defs.at(g_var_struct_types.at(receiver));
+    auto it = def.methods.find(_method_name);
+    if (it == def.methods.end()) throw CompileError(("unknown struct method: " + _method_name).c_str());
+    if (_args.size() != it->second->params.size()) throw CompileError("incorrect struct method argument count");
+    for (size_t i = 0; i < _args.size(); ++i)
+        if (is_float_type(it->second->params[i]->getType()) != is_float_type(_args[i]->compile_type(vars)))
+            throw CompileError("VM struct methods require matching integer/floating argument representations");
+
+    if (receiver == "$this" && vars.count("$thisptr"))
+        Variable("$thisptr").compile(codes, vars, functions, offset);
+    else if (receiver == "$this")
+        Variable("$this").lcompile(codes, vars, functions, offset);
+    else _object->lcompile(codes, vars, functions, offset);
+    for (auto arg : _args) arg->compile(codes, vars, functions, offset);
+    string target = def.name + "." + _method_name;
+    int address = functions.count(target) ? functions.at(target) : 0;
+    if (!address) {
+        string key = "$pending:" + target;
+        if (!functions.count(key)) functions[key] = --functions["$next-method-relocation"];
+        address = functions.at(key);
+    }
+    codes.push_back(Code::makeCode(Code::CALL, address, 0));
+    for (size_t i = 0; i < _args.size() + 1; ++i) codes.push_back(Code::makeCode(Code::POP, 3, 0));
+    codes.push_back(Code::makeCode(Code::PUSHR, 2, 0));
 }
 
 void CallMethodExp::lcompile(vector<Code>&, map<string, int>&, map<string, int>&, int) {
@@ -1207,6 +1256,12 @@ void CallMethodExp::lcompile(vector<Code>&, map<string, int>&, map<string, int>&
 }
 
 VarType CallMethodExp::llvm_declared_type(LLVMGenCtx& ctx) const {
+    string struct_var = dynamic_cast<ThisExpr *>(_object) ? ctx.this_var : _object->getVarName();
+    if (ctx.struct_var_types.count(struct_var)) {
+        const auto &def = g_struct_defs.at(ctx.struct_var_types.at(struct_var));
+        auto method = def.methods.find(_method_name);
+        if (method != def.methods.end()) return method->second->ret_type;
+    }
     // Determine the return type of the method
     string cname;
     if (auto super = dynamic_cast<SuperExpr *>(_object)) {
@@ -1224,6 +1279,14 @@ VarType CallMethodExp::llvm_declared_type(LLVMGenCtx& ctx) const {
     return VarType::LONG;
 }
 
+VarType CallMethodExp::compile_type(map<string, int> &) const {
+    auto receiver = g_var_struct_types.find(_object->getVarName());
+    if (receiver == g_var_struct_types.end()) return VarType::LONG;
+    const auto &def = g_struct_defs.at(receiver->second);
+    auto method = def.methods.find(_method_name);
+    return method == def.methods.end() ? VarType::LONG : canonical_type(method->second->ret_type);
+}
+
 VarType CallMethodExp::llvm_etype(LLVMGenCtx& ctx) const {
     return canonical_type(llvm_declared_type(ctx));
 }
@@ -1234,8 +1297,10 @@ void CallMethodSt::print(ostream& os, int tab) {
     os << ";" << endl;
 }
 
-void CallMethodSt::compile(vector<Code>&, map<string, int>&, map<string, int>&, int) {
-    throw CompileError("methods are only supported in LLVM target");
+void CallMethodSt::compile(vector<Code>& codes, map<string, int>& vars,
+                           map<string, int>& functions, int offset) {
+    _call->compile(codes, vars, functions, offset);
+    codes.push_back(Code::makeCode(Code::POP, 3, 0));
 }
 
 void ClassDef::print(ostream& os, int tab) {
