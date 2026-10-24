@@ -635,6 +635,8 @@ static void alloc_struct_fields(LLVMGenCtx& ctx, const string& var_id,
             ctx.out << "  " << ptr << " = alloca " << tstr << "\n";
             if (is_float_type(field.type))
                 ctx.out << "  store " << tstr << " 0.0, ptr " << ptr << "\n";
+            else if (field.type == VarType::CLASS || field.type == VarType::STRING || field.type == VarType::ARRAY)
+                ctx.out << "  store ptr null, ptr " << ptr << "\n";
             else
                 ctx.out << "  store " << tstr << " 0, ptr " << ptr << "\n";
             ctx.struct_field_ptrs[var_id][full] = ptr;
@@ -681,6 +683,11 @@ static string llvm_coerce(LLVMGenCtx& ctx, const string& val,
 // Ensure a value is in its canonical form (i64 for ints, double for floats).
 static string llvm_to_canonical(LLVMGenCtx& ctx, const string& val,
                                 VarType declared) {
+    if (declared == VarType::CLASS || declared == VarType::STRING || declared == VarType::ARRAY) {
+        string r = ctx.fresh("reference.i64");
+        ctx.out << "  " << r << " = ptrtoint ptr " << val << " to i64\n";
+        return r;
+    }
     if (declared == VarType::CHAR) {
         string r = ctx.fresh("sext");
         ctx.out << "  " << r << " = sext i8 " << val << " to i64\n";
@@ -825,6 +832,7 @@ static bool is_class_returning_call(LLVMGenCtx& ctx, Expression* expr) {
         if (ctx.func_return_class.count(cfe->getId())) return true;
     }
     if (auto* cme = dynamic_cast<CallMethodExp*>(expr)) {
+        if (cme->llvm_declared_type(ctx) == VarType::CLASS) return true;
         string cname = resolve_expr_class_name(ctx, cme->getObject());
         if (!cname.empty() && g_class_defs.count(cname)) {
             auto* minfo = g_class_defs[cname].getMethod(cme->getMethodName());
@@ -1307,48 +1315,47 @@ void InitializedDeclVar::llvm_emit(LLVMGenCtx& ctx) {
             throw CompileError("struct variable must be initialized with struct literal, struct-returning function, or another struct variable");
         const auto& sdef = g_struct_defs[_struct_name];
 
-        // Save and set 'this' context
-        string prev_this_var = ctx.this_var;
-        ctx.this_var = _id;
-
-        // Execute constructor: allocate param allocas, assign values, compile body
-        if (sdef.constructor) {
-            const auto& call_args = si->getArgs();
-            for (int pi = 0; pi < (int)sdef.constructor->params.size(); pi++) {
-                const string& pname = sdef.constructor->params[pi].first;
-                VarType ptype = sdef.constructor->params[pi].second;
-                int n = ctx.counter++;
-                string tstr = llvm_type_str(ptype);
-                string ptr = "%" + pname + ".param." + to_string(n);
-                ctx.out << "  " << ptr << " = alloca " << tstr << "\n";
-                if (is_float_type(ptype)) {
-                    ctx.out << "  store " << tstr << " 0.0, ptr " << ptr << "\n";
-                } else {
-                    ctx.out << "  store " << tstr << " 0, ptr " << ptr << "\n";
-                }
-                ctx.vars[pname] = ptr;
-                ctx.var_types[pname] = ptype;
-
-                // Store positional arg value
-                if (pi < (int)call_args.size()) {
-                    string val = call_args[pi]->llvm_rval(ctx);
-                    VarType src_c = call_args[pi]->llvm_etype(ctx);
-                    string store_val = llvm_coerce(ctx, val, src_c, ptype);
-                    ctx.out << "  store " << tstr << " " << store_val
-                            << ", ptr " << ptr << "\n";
-                }
+        const auto ctor = sdef.constructor;
+        if (!ctor) return;
+        LLVMGenCtx saved = ctx;
+        auto restore = [&]() {
+            ctx.vars = saved.vars; ctx.var_types = saved.var_types; ctx.const_vars = saved.const_vars;
+            ctx.struct_field_ptrs = saved.struct_field_ptrs; ctx.struct_var_types = saved.struct_var_types;
+            ctx.struct_subfield_types = saved.struct_subfield_types; ctx.class_var_types = saved.class_var_types;
+            ctx.class_var_nullable = saved.class_var_nullable; ctx.array_var_typeinfo = saved.array_var_typeinfo;
+            ctx.array_data_ptrs = saved.array_data_ptrs; ctx.array_elem_types = saved.array_elem_types;
+            ctx.this_var = saved.this_var; ctx.this_class = saved.this_class; ctx.this_ptr_reg = saved.this_ptr_reg;
+            ctx.scopes = saved.scopes;
+        };
+        try {
+            vector<string> values;
+            for (int pi = 0; pi < (int)ctor->params.size(); ++pi) {
+                auto arg = si->getArgs().at(pi);
+                auto ptype = ctor->params[pi].second;
+                string value = arg->llvm_rval(ctx);
+                if (ptype == VarType::CLASS || ptype == VarType::STRING || ptype == VarType::ARRAY) {
+                    string ptr = ctx.fresh("ctor.argument");
+                    ctx.out << "  " << ptr << " = inttoptr i64 " << value << " to ptr\n";
+                    value = ptr;
+                } else value = llvm_coerce(ctx, value, arg->llvm_etype(ctx), ptype);
+                values.push_back(value);
             }
-            sdef.constructor->body->llvm_emit(ctx);
-
-            // Remove param vars from context
-            for (const auto& param : sdef.constructor->params) {
-                const auto& pname = param.first;
-                ctx.vars.erase(pname);
-                ctx.var_types.erase(pname);
-            }
-        }
-
-        ctx.this_var = prev_this_var;
+            string receiver = "$ctor.this." + to_string(ctx.counter++);
+            ctx.vars.clear(); ctx.var_types.clear(); ctx.const_vars.clear();
+            ctx.struct_field_ptrs.clear(); ctx.struct_var_types.clear(); ctx.struct_subfield_types.clear();
+            ctx.class_var_types.clear(); ctx.class_var_nullable.clear(); ctx.array_var_typeinfo.clear();
+            ctx.array_data_ptrs.clear(); ctx.array_elem_types.clear();
+            ctx.this_var = receiver; ctx.this_class.clear(); ctx.this_ptr_reg.clear();
+            ctx.struct_field_ptrs[receiver] = saved.struct_field_ptrs[_id];
+            ctx.struct_var_types[receiver] = _struct_name;
+            ctx.struct_subfield_types[receiver] = saved.struct_subfield_types[_id];
+            ctx.push_scope();
+            for (int pi = 0; pi < (int)values.size(); ++pi)
+                ctor->param_decls.at(pi)->llvm_param(ctx, values[pi]);
+            ctor->body->llvm_emit(ctx);
+            ctx.pop_scope();
+        } catch (...) { restore(); throw; }
+        restore();
         return;
     }
 
@@ -1719,7 +1726,7 @@ void Function::llvm_emit(LLVMGenCtx& ctx) {
     ctx.sret_field_ptrs.clear();
     ctx.current_ret_struct = (_ret_type == VarType::STRUCT) ? _ret_struct_name : "";
     ctx.current_ret_is_class = (_ret_type == VarType::CLASS);
-    ctx.current_method_ret_type = VarType::LONG;
+    ctx.current_method_ret_type = _receiver_struct.empty() ? VarType::LONG : canonical_type(_ret_type);
     ctx.terminated = false;
     ctx.current_function = _id;
     ctx.scopes.clear();
@@ -1731,7 +1738,8 @@ void Function::llvm_emit(LLVMGenCtx& ctx) {
     // Register signatures (also done by pre_register, but ensure consistency)
     llvm_pre_register(ctx);
 
-    string ret_llvm = is_main ? "i32" : (returns_struct ? "void" : "i64");
+    string ret_llvm = is_main ? "i32" : (returns_struct ? "void" :
+        (is_float_type(ctx.current_method_ret_type) ? "double" : "i64"));
 
     // Build LLVM param list: [sret ptrs...] [expanded field params...]
     vector<pair<string, string>> llvm_params;
@@ -1804,7 +1812,7 @@ void Function::llvm_emit(LLVMGenCtx& ctx) {
         if (returns_struct)
             ctx.out << "  ret void\n";
         else
-            ctx.out << (is_main ? "  ret i32 0\n" : "  ret i64 0\n");
+            ctx.out << "  ret " << ret_llvm << (ret_llvm == "double" ? " 0.0\n" : " 0\n");
     }
     ctx.out << "}\n\n";
 }
@@ -2561,7 +2569,8 @@ string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
         auto user_args = prepareCallArgs(ctx, def.name + "." + _method_name, _args);
         args.insert(args.end(), user_args.begin(), user_args.end());
         string result = ctx.fresh("struct.method");
-        ctx.out << "  " << result << " = call i64 @" << def.name << "." << _method_name << "(";
+        string ret_llvm = is_float_type(method->second->ret_type) ? "double" : "i64";
+        ctx.out << "  " << result << " = call " << ret_llvm << " @" << def.name << "." << _method_name << "(";
         for (size_t i = 0; i < args.size(); ++i) {
             if (i) ctx.out << ", ";
             ctx.out << args[i].first << " " << args[i].second;
@@ -2734,7 +2743,12 @@ string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
 // ===== CallMethodSt =====
 
 void CallMethodSt::llvm_emit(LLVMGenCtx& ctx) {
-    _call->llvm_rval(ctx);
+    string value = _call->llvm_rval(ctx);
+    if (is_class_returning_call(ctx, _call)) {
+        string ptr = ctx.fresh("unused.method.ptr");
+        ctx.out << "  " << ptr << " = inttoptr i64 " << value << " to ptr\n";
+        ctx.out << "  call void @_dorothy_release(ptr " << ptr << ")\n";
+    }
 }
 
 // ===== ClassDef =====

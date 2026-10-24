@@ -1124,6 +1124,7 @@ public:
   virtual string llvm_rval(LLVMGenCtx &);
   virtual VarType llvm_etype(LLVMGenCtx &ctx) const;
   virtual VarType llvm_declared_type(LLVMGenCtx &ctx) const;
+  VarType compile_type(map<string, int> &) const override;
   void collect_strings(LLVMGenCtx &ctx) override;
 };
 

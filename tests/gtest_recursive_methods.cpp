@@ -2,6 +2,7 @@
 #include <fstream>
 #include <sstream>
 #include <cstdlib>
+#include <cstring>
 #include <sys/wait.h>
 #include <unistd.h>
 #include "../include/parser.hpp"
@@ -103,4 +104,63 @@ TEST(RecursiveMethodTest, InvalidStructMethodCallsAreRejected) {
 TEST(RecursiveMethodTest, NullableContractsApplyInsideStructMethods) {
     EXPECT_THROW(parse_methods("class Node { var x: int; } struct S { "
         "func unsafe(n: Node?) -> int { return n.x; } }"), CompileError);
+}
+
+TEST(RecursiveMethodTest, FloatingStructRecursionUsesNativeDoubleABI) {
+    const string definitions = "struct Sum { func value(n: int) -> double { "
+        "if(n == 0) { return 0.5; } return this.value(n - 1) + 0.5; } } ";
+    EXPECT_EQ(run_methods_native(definitions +
+        "func main() -> int { var s = Sum(); if(s.value(4) > 2.4) { return 42; } return 0; }"), 42);
+    float expected = 3.0f; int bits; std::memcpy(&bits, &expected, sizeof(bits));
+    EXPECT_EQ(run_methods_vm(definitions +
+        "func main() { var s = Sum(); return s.value(4) + s.value(0); }"), bits);
+}
+
+TEST(RecursiveMethodTest, ConstructorInsideMethodRestoresCallerReceiverAndBindings) {
+    const string source = "struct S { var x: int; constructor(x: int) { this.x = x; } "
+        "func value(x: int) -> int { var other = S(x); return this.x + other.x + x; } } "
+        "func main() -> int { var s = S(3); return s.value(7); }";
+    EXPECT_EQ(run_methods_vm(source), 17);
+    EXPECT_EQ(run_methods_native(source), 17);
+}
+
+TEST(RecursiveMethodTest, MethodConstructorArgumentsUseOuterReceiver) {
+    const string source = "struct S { var x: int; constructor(x: int) { this.x = x; } "
+        "func value() -> int { var other = S(this.x + 1); return this.x + other.x; } } "
+        "func main() -> int { var s = S(3); return s.value(); }";
+    EXPECT_EQ(run_methods_vm(source), 7);
+    EXPECT_EQ(run_methods_native(source), 7);
+}
+
+TEST(RecursiveMethodTest, NativeClassMethodCanConstructIndependentLocalStruct) {
+    EXPECT_EQ(run_methods_native("struct S { var x: int; constructor(x: int) { this.x = x; } } "
+        "class C { var x: int; constructor(x: int) { this.x = x; } "
+        "func value() -> int { var s = S(7); return s.x + this.x; } } "
+        "func main() -> int { var c = C(3); return c.value(); }"), 10);
+}
+
+TEST(RecursiveMethodTest, VmRejectsUnsupportedImplicitFloatingRepresentations) {
+    EXPECT_THROW(run_methods_vm("struct S { func value() -> double { return 1; } } "
+        "func main() { var s = S(); return s.value(); }"), CompileError);
+    EXPECT_THROW(run_methods_vm("struct S { func value(x: double) -> double { return x; } } "
+        "func main() { var s = S(); return s.value(1); }"), CompileError);
+    EXPECT_EQ(run_methods_native("struct S { func value(x: double) -> double { return x; } } "
+        "func main() -> int { var s = S(); if(s.value(1) > 0.9) { return 42; } return 0; }"), 42);
+}
+
+TEST(RecursiveMethodTest, NativeReferenceReturnsTransferOwnership) {
+    const string source = "class Node { var x: int; constructor(x: int) { this.x = x; } } "
+        "struct S { var node: Node?; constructor(n: Node) { this.node = n; } "
+        "func get() -> Node? { return this.node; } } "
+        "func main() -> int { var s = S(Node(7)); var n = s.get(); s.get(); "
+        "if(n == null) { return 0; } return n.x; }";
+    EXPECT_EQ(run_methods_native(source), 7);
+    auto program = parse_methods(source);
+    std::ostringstream out; LLVMGenCtx ctx(out);
+    for (auto function : program) if (!function->isImport()) ctx.defined_funcs.insert(function->getName());
+    for (auto function : program) function->llvm_pre_register(ctx);
+    for (auto function : program) function->llvm_emit(ctx);
+    string ir = out.str(); auto main = ir.substr(ir.find("define i32 @main"));
+    EXPECT_NE(main.find("unused.method.ptr"), string::npos);
+    EXPECT_EQ(main.find("call void @_dorothy_retain(ptr %init.ptr"), string::npos);
 }

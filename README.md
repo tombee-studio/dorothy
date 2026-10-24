@@ -465,3 +465,39 @@ accepts only `super()`, which does nothing. Parent construction is explicit;
 `super(...)` is not inserted automatically. Calling an abstract parent method
 or using `super` outside a derived class is an error. Classes, including `super`,
 use the LLVM target (`--emit-llvm` or `--target`); the VM does not support classes.
+
+### Recursive struct methods
+
+Structs can define instance methods with `func`. Calls use runtime call frames,
+so direct and mutual recursion preserve each invocation's parameters and locals.
+The receiver is passed by reference: updates through `this` affect the original
+struct, while separate struct instances remain independent.
+
+```dorothy
+struct Factorial {
+    var calls: int;
+    constructor() { this.calls = 0; }
+    func value(n: int) -> int {
+        this.calls = this.calls + 1;
+        if (n <= 1) { return 1; }
+        return n * this.value(n - 1);
+    }
+}
+func main() -> int {
+    var calculator = Factorial();
+    return calculator.value(5); // 120; calculator.calls == 5
+}
+```
+
+Primitive struct methods work in both the VM and LLVM targets; managed class,
+string, and array features retain their existing target limitations. Struct
+method parameters can be primitive or reference types; struct values as method
+parameters or return values are currently rejected explicitly. Floating results
+use the VM's existing single-precision representation and a canonical `double`
+ABI in LLVM. The VM rejects implicit integer/floating representation changes at
+struct method argument and return boundaries; use floating expressions for a
+floating declaration. LLVM supports its normal numeric coercions at these
+boundaries. Method signatures are known before generation, so mutually recursive
+methods may refer to a later method in the same struct. Existing class methods
+also support recursion, including calls through inherited and `super` methods,
+on the LLVM target. Structs themselves retain value semantics and do not inherit.
