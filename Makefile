@@ -27,6 +27,7 @@ test:
 		g++ -c --std=c++17 src/parser.cpp -o obj/parser.o
 		g++ -c --std=c++17 src/llvm_gen.cpp -o obj/llvm_gen.o
 		g++ -c --std=c++17 src/typechecker.cpp -o obj/typechecker.o
+		g++ -c --std=c++17 src/null_safety.cpp -o obj/null_safety.o
 		g++ --std=c++17 $(GTEST_CFLAGS) \
 			tests/gtest_code.cpp \
 			tests/gtest_lexer.cpp \
@@ -51,6 +52,7 @@ lib:
 		g++ -c --std=c++17 src/parser.cpp -o obj/parser.o
 		g++ -c --std=c++17 src/llvm_gen.cpp -o obj/llvm_gen.o
 		g++ -c --std=c++17 src/typechecker.cpp -o obj/typechecker.o
+		g++ -c --std=c++17 src/null_safety.cpp -o obj/null_safety.o
 		ar -rcs Lib/libdorothy.a obj/*.o
 
 clean:

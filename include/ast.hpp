@@ -33,11 +33,13 @@ struct FieldInfo {
   VarType type;
   string struct_name; // non-empty when type == STRUCT
   bool is_nullable = false;
+  TypeInfo type_info;
 };
 
 struct ConstructorInfo {
   vector<pair<string, VarType>> params;
   Statement *body;
+  vector<DeclVar *> param_decls;
 };
 
 struct StructDefInfo {
@@ -158,6 +160,10 @@ public:
   const string &getClassName() const { return _struct_name; }
   const TypeInfo &getTypeInfo() const { return _type_info; }
   void setTypeInfo(const TypeInfo &ti) { _type_info = ti; }
+  void resolveReferenceType(const TypeInfo &ti, const string &name) {
+    _type = ti.base_type; _type_info = ti; _struct_name = name;
+    _is_nullable = ti.is_nullable;
+  }
 
   virtual void print(ostream &, int tab);
   virtual void compile(vector<Code> &, map<string, int> &, map<string, int> &,
@@ -202,6 +208,7 @@ class InitializedDeclArrayVar : public DeclArrayVar {
   vector<Expression *> _values;
 
 public:
+  const vector<Expression *> &getValues() const { return _values; }
   InitializedDeclArrayVar(string id, int num, vector<Expression *> values,
                           VarType type = VarType::LONG, bool is_const = false)
       : DeclArrayVar(id, num, type, is_const), _values(values) {}
@@ -222,6 +229,7 @@ protected:
   string _ret_struct_name;
   bool _has_explicit_ret_type;
   bool _is_ret_nullable;
+  TypeInfo _return_type_info;
 
 public:
   Function(string id, vector<DeclVar *> args, Statement *body,
@@ -242,6 +250,8 @@ public:
   const string &getRetClassName() const { return _ret_struct_name; }
   bool hasExplicitRetType() const { return _has_explicit_ret_type; }
   bool isRetNullable() const { return _is_ret_nullable; }
+  const TypeInfo &getReturnTypeInfo() const { return _return_type_info; }
+  void setReturnTypeInfo(const TypeInfo &ti) { _return_type_info = ti; }
   Statement *getBody() const { return _body; }
   const vector<DeclVar *> &getArgs() const { return _args; }
   virtual bool isImport() const { return false; }
@@ -401,6 +411,7 @@ public:
   virtual void lcompile(vector<Code> &, map<string, int> &, map<string, int> &,
                         int) = 0;
   virtual string llvm_rval(LLVMGenCtx &) = 0;
+  virtual vector<Expression *> children() const { return {}; }
   virtual string llvm_lval(LLVMGenCtx &);
   // Returns the canonical computation type (LONG for ints, DOUBLE for floats)
   virtual VarType llvm_etype(LLVMGenCtx &) const { return VarType::LONG; }
@@ -471,6 +482,9 @@ class AddExp : public Expression {
   Expression *_right;
 
 public:
+  Expression *getLeft() const { return _left; }
+  Expression *getRight() const { return _right; }
+  vector<Expression *> children() const override { return {_left, _right}; }
   AddExp(Expression *left, Expression *right) : _left(left), _right(right) {}
 
   void print(ostream &, int tab) override;
@@ -499,6 +513,9 @@ class SubExp : public Expression {
   Expression *_right;
 
 public:
+  Expression *getLeft() const { return _left; }
+  Expression *getRight() const { return _right; }
+  vector<Expression *> children() const override { return {_left, _right}; }
   SubExp(Expression *left, Expression *right) : _left(left), _right(right) {}
 
   void print(ostream &, int tab) override;
@@ -527,6 +544,9 @@ class MulExp : public Expression {
   Expression *_right;
 
 public:
+  Expression *getLeft() const { return _left; }
+  Expression *getRight() const { return _right; }
+  vector<Expression *> children() const override { return {_left, _right}; }
   MulExp(Expression *left, Expression *right) : _left(left), _right(right) {}
 
   void print(ostream &, int tab) override;
@@ -555,6 +575,9 @@ class DivExp : public Expression {
   Expression *_right;
 
 public:
+  Expression *getLeft() const { return _left; }
+  Expression *getRight() const { return _right; }
+  vector<Expression *> children() const override { return {_left, _right}; }
   DivExp(Expression *left, Expression *right) : _left(left), _right(right) {}
 
   void print(ostream &, int tab) override;
@@ -583,6 +606,9 @@ class ModExp : public Expression {
   Expression *_right;
 
 public:
+  Expression *getLeft() const { return _left; }
+  Expression *getRight() const { return _right; }
+  vector<Expression *> children() const override { return {_left, _right}; }
   ModExp(Expression *left, Expression *right) : _left(left), _right(right) {}
 
   void print(ostream &, int tab) override;
@@ -611,6 +637,9 @@ class EQExp : public Expression {
   Expression *_right;
 
 public:
+  Expression *getLeft() const { return _left; }
+  Expression *getRight() const { return _right; }
+  vector<Expression *> children() const override { return {_left, _right}; }
   EQExp(Expression *left, Expression *right) : _left(left), _right(right) {}
 
   virtual void print(ostream &, int tab);
@@ -627,6 +656,9 @@ class NEExp : public Expression {
   Expression *_right;
 
 public:
+  Expression *getLeft() const { return _left; }
+  Expression *getRight() const { return _right; }
+  vector<Expression *> children() const override { return {_left, _right}; }
   NEExp(Expression *left, Expression *right) : _left(left), _right(right) {}
 
   virtual void print(ostream &, int tab);
@@ -643,6 +675,9 @@ class LTExp : public Expression {
   Expression *_right;
 
 public:
+  Expression *getLeft() const { return _left; }
+  Expression *getRight() const { return _right; }
+  vector<Expression *> children() const override { return {_left, _right}; }
   LTExp(Expression *left, Expression *right) : _left(left), _right(right) {}
 
   virtual void print(ostream &, int tab);
@@ -659,6 +694,9 @@ class LEExp : public Expression {
   Expression *_right;
 
 public:
+  Expression *getLeft() const { return _left; }
+  Expression *getRight() const { return _right; }
+  vector<Expression *> children() const override { return {_left, _right}; }
   LEExp(Expression *left, Expression *right) : _left(left), _right(right) {}
 
   virtual void print(ostream &, int tab);
@@ -675,6 +713,9 @@ class GTExp : public Expression {
   Expression *_right;
 
 public:
+  Expression *getLeft() const { return _left; }
+  Expression *getRight() const { return _right; }
+  vector<Expression *> children() const override { return {_left, _right}; }
   GTExp(Expression *left, Expression *right) : _left(left), _right(right) {}
 
   virtual void print(ostream &, int tab);
@@ -691,6 +732,9 @@ class GEExp : public Expression {
   Expression *_right;
 
 public:
+  Expression *getLeft() const { return _left; }
+  Expression *getRight() const { return _right; }
+  vector<Expression *> children() const override { return {_left, _right}; }
   GEExp(Expression *left, Expression *right) : _left(left), _right(right) {}
 
   virtual void print(ostream &, int tab);
@@ -833,6 +877,7 @@ class Address : public Expression {
   Expression *_exp;
 
 public:
+  vector<Expression *> children() const override { return {_exp}; }
   explicit Address(Expression *exp) : _exp(exp) {}
 
   virtual void print(ostream &, int tab);
@@ -861,6 +906,7 @@ class Access : public Expression {
   Expression *_rightside;
 
 public:
+  vector<Expression *> children() const override { return {_rightside}; }
   explicit Access(Expression *rightside) : _rightside(rightside) {}
 
   virtual void print(ostream &, int tab);
@@ -1006,6 +1052,8 @@ class SuperConstructorExp : public Expression {
   string _base_class;
   vector<Expression *> _args;
 public:
+  const string &getBaseClass() const { return _base_class; }
+  const vector<Expression *> &getArgs() const { return _args; }
   SuperConstructorExp(string base_class, vector<Expression *> args)
       : _base_class(std::move(base_class)), _args(std::move(args)) {}
   void print(ostream &, int) override;

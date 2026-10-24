@@ -60,8 +60,10 @@ class RectRendererComponent: Component {
     override func update() {}
 
     override func render(ren: long) {
+        var entityRef: Entity? = this.entity;
+        if (entityRef == null) { return 0; }
         let tName: string = "Transform";
-        var t: TransformComponent? = this.entity.getComponent(tName);
+        var t: TransformComponent? = entityRef.getComponent(tName);
         if (t != null) {
             glinda_draw_rect(ren, t.x, t.y, t.width, t.height, this.r, this.g, this.b, 255);
         }
@@ -89,11 +91,13 @@ class PaddleControllerComponent: Component {
     override func init() {}
 
     override func update() {
+        var entityRef: Entity? = this.entity;
+        if (entityRef == null) { return 0; }
         var numkeys: int = 0;
         let state: long = SDL_GetKeyboardState(numkeys);
         if (state != 0) {
             let tName: string = "Transform";
-            var t: TransformComponent? = this.entity.getComponent(tName);
+            var t: TransformComponent? = entityRef.getComponent(tName);
             if (t != null) {
                 // Left: 80, A: 4
                 var left_pressed: int = 0;
@@ -200,6 +204,8 @@ class GameManagerComponent: Component {
     }
 
     func onBallLost() {
+        var ballTransRef: TransformComponent? = this.ballTrans;
+        var paddleTransRef: TransformComponent? = this.paddleTrans;
         this.lives = this.lives - 1;
         if (this.lives <= 0) {
             this.gameState = 1;
@@ -208,20 +214,22 @@ class GameManagerComponent: Component {
         } else {
             let fmt_score: string = "Score: %d | Lives: %d\n";
             printf(fmt_score, this.score, this.lives);
-            if (this.ballTrans != null) {
-                if (this.paddleTrans != null) {
-                    this.ballTrans.x = this.paddleTrans.x + this.paddleTrans.width / 2 - this.ballTrans.width / 2;
+            if (ballTransRef != null) {
+                if (paddleTransRef != null) {
+                    ballTransRef.x = paddleTransRef.x + paddleTransRef.width / 2 - ballTransRef.width / 2;
                 } else {
-                    this.ballTrans.x = 315;
+                    ballTransRef.x = 315;
                 }
-                this.ballTrans.y = 300;
-                this.ballTrans.vx = 3;
-                this.ballTrans.vy = 0 - 4;
+                ballTransRef.y = 300;
+                ballTransRef.vx = 3;
+                ballTransRef.vy = 0 - 4;
             }
         }
     }
 
     func restart() {
+        var ballTransRef: TransformComponent? = this.ballTrans;
+        var paddleTransRef: TransformComponent? = this.paddleTrans;
         this.score = 0;
         this.lives = 3;
         this.gameState = 0;
@@ -231,7 +239,7 @@ class GameManagerComponent: Component {
         var curr: Entity? = this.scene.firstEntity;
         let bName: string = "Block";
         while (curr != null) {
-            let b: BlockComponent? = curr.getComponent(bName);
+            var b: BlockComponent? = curr.getComponent(bName);
             if (b != null) {
                 b.alive = 1;
                 curr.active = 1;
@@ -239,16 +247,16 @@ class GameManagerComponent: Component {
             curr = curr.next;
         }
 
-        if (this.paddleTrans != null) {
-            this.paddleTrans.x = 280;
-            this.paddleTrans.y = 440;
+        if (paddleTransRef != null) {
+            paddleTransRef.x = 280;
+            paddleTransRef.y = 440;
         }
 
-        if (this.ballTrans != null) {
-            this.ballTrans.x = 315;
-            this.ballTrans.y = 300;
-            this.ballTrans.vx = 3;
-            this.ballTrans.vy = 0 - 4;
+        if (ballTransRef != null) {
+            ballTransRef.x = 315;
+            ballTransRef.y = 300;
+            ballTransRef.vx = 3;
+            ballTransRef.vy = 0 - 4;
         }
 
         let restart_msg: string = "Game Restarted!\n";
@@ -306,9 +314,12 @@ class BallPhysicsComponent: Component {
     override func init() {}
 
     override func update() {
+        var entityRef: Entity? = this.entity;
+        if (entityRef == null) { return 0; }
+        var paddleTransRef: TransformComponent? = this.paddleTrans;
         if (this.gameManager.gameState == 0) {
             let tName: string = "Transform";
-            var t: TransformComponent? = this.entity.getComponent(tName);
+            var t: TransformComponent? = entityRef.getComponent(tName);
             if (t != null) {
                 // Left wall
                 if (t.x <= 10) {
@@ -335,11 +346,11 @@ class BallPhysicsComponent: Component {
                 }
 
                 // Paddle collision
-                if (this.paddleTrans != null) {
-                    let px: int = this.paddleTrans.x;
-                    let py: int = this.paddleTrans.y;
-                    let pw: int = this.paddleTrans.width;
-                    let ph: int = this.paddleTrans.height;
+                if (paddleTransRef != null) {
+                    let px: int = paddleTransRef.x;
+                    let py: int = paddleTransRef.y;
+                    let pw: int = paddleTransRef.width;
+                    let ph: int = paddleTransRef.height;
 
                     if (t.y + t.height >= py) {
                         if (t.y <= py + ph) {
@@ -370,10 +381,10 @@ class BallPhysicsComponent: Component {
                 let bName: string = "Block";
                 while (currE != null) {
                     if (currE.active == 1) {
-                        let blk: BlockComponent? = currE.getComponent(bName);
+                        var blk: BlockComponent? = currE.getComponent(bName);
                         if (blk != null) {
                             if (blk.alive == 1) {
-                                let bt: TransformComponent? = currE.getComponent(tName);
+                                var bt: TransformComponent? = currE.getComponent(tName);
                                 if (bt != null) {
                                     if (t.x + t.width >= bt.x) {
                                         if (t.x <= bt.x + bt.width) {

@@ -52,6 +52,7 @@ void TypeChecker::check_stmt(const Statement *stmt,
 
     } else if (auto *ret = dynamic_cast<const ReturnSt *>(stmt)) {
         if (!ret->getExpr()) return;
+        if (dynamic_cast<const NullExp *>(ret->getExpr())) return; // validated by null analysis
         check_expr(ret->getExpr(), var_types, const_vars, func_name);
         if (expected_ret == VarType::INFERRED || expected_ret == VarType::STRUCT) return;
         VarType expr_type = ret->getExpr()->static_type(var_types, _func_ret_types);
@@ -102,7 +103,7 @@ void TypeChecker::check_stmt(const Statement *stmt,
         if (init_decl && init_decl->getInit()) {
             check_expr(init_decl->getInit(), var_types, const_vars, func_name);
             VarType init_t = init_decl->getInit()->static_type(var_types, _func_ret_types);
-            if (t == VarType::STRING && !is_string_type(init_t)) {
+            if (t == VarType::STRING && !is_string_type(init_t) && !dynamic_cast<NullExp *>(init_decl->getInit())) {
                 throw TypeCheckError("cannot initialize string variable '" + decl->getId() + "' with non-string value");
             }
             if (t != VarType::STRING && t != VarType::INFERRED && is_string_type(init_t)) {
@@ -126,6 +127,7 @@ void TypeChecker::check_stmt(const Statement *stmt,
 }
 
 void TypeChecker::check(const vector<Function *> &program) {
+    check_null_safety(program);
     // First pass: collect all function return types
     _func_ret_types.clear();
     for (auto *f : program)
