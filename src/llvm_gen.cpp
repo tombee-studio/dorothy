@@ -2,6 +2,9 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <cstdint>
+#include <iomanip>
+#include <sstream>
 #include "../include/ast.hpp"
 
 using std::to_string;
@@ -2346,9 +2349,13 @@ string ThisExpr::llvm_lval(LLVMGenCtx& ctx) {
 // ===== FloatExp =====
 
 string FloatExp::llvm_rval(LLVMGenCtx& ctx) {
-    // Emit as a double literal; LLVM requires hex float or decimal for doubles.
+    // Exact IEEE-754 hex literals stay valid even for integral values such as 2.0.
+    std::uint64_t bits;
+    std::memcpy(&bits, &_float_val, sizeof(bits));
+    std::ostringstream literal;
+    literal << "0x" << std::uppercase << std::hex << std::setw(16) << std::setfill('0') << bits;
     string reg = ctx.fresh("flit");
-    ctx.out << "  " << reg << " = fadd double 0.0, " << _float_val << "\n";
+    ctx.out << "  " << reg << " = fadd double 0.0, " << literal.str() << "\n";
     return reg;
 }
 
@@ -2907,12 +2914,7 @@ string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
 }
 
 VarType CallMethodExp::llvm_declared_type(LLVMGenCtx &ctx) const {
-    auto receiver = resolve_expr_type(ctx, _object);
-    if (receiver.base_type == VarType::CLASS && g_class_defs.count(receiver.type_name)) {
-        auto method = g_class_defs.at(receiver.type_name).getMethod(_method_name);
-        if (method) return method->ret_type;
-    }
-    return VarType::LONG;
+    return resolve_expr_type(ctx, this).base_type;
 }
 
 // ===== CallMethodSt =====

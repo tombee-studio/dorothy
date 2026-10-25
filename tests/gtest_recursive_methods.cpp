@@ -231,3 +231,39 @@ TEST(NestedStructReceiverTest, MethodLocalNestedStructCopyHasIndependentValueSto
     EXPECT_EQ(run_methods_vm(source), 9);
     EXPECT_EQ(run_methods_native(source), 9);
 }
+
+TEST(NestedStructReceiverTest, FloatingRecursiveResultsKeepNestedReceiverType) {
+    const string definitions =
+        "struct Fraction { func value(n: int) -> double { "
+        "if(n == 0) { return 0.5; } return this.value(n - 1) + 0.5; } } "
+        "struct Box { var padding: int; var fraction: Fraction; } ";
+    float expected = 3.0f; int bits;
+    std::memcpy(&bits, &expected, sizeof(bits));
+    EXPECT_EQ(run_methods_vm(definitions +
+        "func main() { var b = Box(); return b.fraction.value(4) + b.fraction.value(0); }"), bits);
+    EXPECT_EQ(run_methods_native(definitions +
+        "func main() -> int { var b = Box(); "
+        "if(b.fraction.value(4) + b.fraction.value(0) > 2.9) { return 42; } return 0; }"), 42);
+}
+
+TEST(NestedStructReceiverTest, FirstLeafIsZeroBeforeRecursiveCall) {
+    const string source =
+        "struct Counter { var calls: int; func total(n: int) -> int { "
+        "this.calls = this.calls + 1; if(n == 0) { return 0; } return n + this.total(n - 1); } } "
+        "struct Inner { var counter: Counter; var sibling: int; } "
+        "struct Outer { var inner: Inner; var other: Counter; } "
+        "func main() -> int { var outer = Outer(); outer.inner.sibling = 7; "
+        "var sum = 10 + outer.inner.counter.total(4); "
+        "return sum + outer.inner.counter.calls + outer.inner.sibling + outer.other.calls; }";
+    EXPECT_EQ(run_methods_vm(source), 32);
+    EXPECT_EQ(run_methods_native(source), 32);
+}
+
+TEST(NestedStructReceiverTest, IntegralFloatingLiteralsRemainValidLlvmOperands) {
+    const string source =
+        "struct Scale { func value(x: double) -> double { return x * 1.5; } } "
+        "struct Box { var scale: Scale; } func main() -> int { var b = Box(); "
+        "if(b.scale.value(2.0) == 3.0) { return 42; } return 0; }";
+    EXPECT_EQ(run_methods_vm(source), 42);
+    EXPECT_EQ(run_methods_native(source), 42);
+}

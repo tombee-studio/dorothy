@@ -114,7 +114,12 @@ void DeclVar::compile(vector<Code>& ofs, map<string, int>& vars,
             vars["$t:" + _id] = (int)VarType::STRUCT;
             if (_is_const) vars["$const:" + _id] = 1;
             g_var_struct_types[_id] = _struct_name;
-            // Zero-initialize all field slots and update SP
+            // Reserve all leaves before using the expression stack to initialize them.
+            ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
+            ofs.push_back(Code::makeCode(Code::PUSHI, vars["."], 0));
+            ofs.push_back(Code::makeCode(Code::POP, 3, 0));
+            ofs.push_back(Code::makeCode(Code::SUB, 0, 0));
+            ofs.push_back(Code::makeCode(Code::MOVE, 1, 2));
             for (int i = 0; i < n; i++) {
                 int slot = base + i;
                 ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
@@ -124,11 +129,6 @@ void DeclVar::compile(vector<Code>& ofs, map<string, int>& vars,
                 ofs.push_back(Code::makeCode(Code::MOVEI, 3, 0));
                 ofs.push_back(Code::makeCode(Code::STORE, 2, 3));
             }
-            ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
-            ofs.push_back(Code::makeCode(Code::PUSHI, vars["."], 0));
-            ofs.push_back(Code::makeCode(Code::POP, 3, 0));
-            ofs.push_back(Code::makeCode(Code::SUB, 0, 0));
-            ofs.push_back(Code::makeCode(Code::MOVE, 1, 2));
             return;
         }
         vars["."]++;
@@ -1285,9 +1285,8 @@ void CallMethodExp::lcompile(vector<Code>&, map<string, int>&, map<string, int>&
 }
 
 VarType CallMethodExp::compile_type(map<string, int> &) const {
-    auto receiver = g_var_struct_types.find(_object->getVarName());
-    if (receiver == g_var_struct_types.end()) return VarType::LONG;
-    const auto &def = g_struct_defs.at(receiver->second);
+    auto receiver = vm_struct_receiver(_object);
+    const auto &def = g_struct_defs.at(receiver.type);
     auto method = def.methods.find(_method_name);
     return method == def.methods.end() ? VarType::LONG : canonical_type(method->second->ret_type);
 }
