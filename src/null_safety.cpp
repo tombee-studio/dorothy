@@ -117,7 +117,11 @@ class NullChecker {
         demand(obj, "receiver of ." + m->getMember());
         if (obj.type.base_type == VarType::ARRAY && m->getMember() == "length") return {type(VarType::LONG)};
         auto info = field(obj.type, m->getMember());
-        if (!info) return {type(VarType::LONG)}; // ordinary type/field diagnostics remain in the backend
+        if (!info) {
+            if (obj.type.base_type == VarType::CLASS || obj.type.base_type == VarType::STRUCT)
+                error("unknown field '" + m->getMember() + "' in " + obj.type.type_name);
+            error("field receiver is not a struct or class value");
+        }
         TypeInfo t = field_type(*info);
         string key = path(m);
         string leaf = key.compare(0, 5, "this.") == 0 ? key.substr(5) : "";
@@ -272,9 +276,9 @@ class NullChecker {
                     return {type(method->ret_type, method->ret_type_name, method->is_ret_nullable), !method->is_ret_nullable};
                 }
             }
-            for (auto arg : c->getArgs()) expr(arg, f);
-            invalidate(f);
-            return {type(VarType::LONG)};
+            if (obj.type.base_type != VarType::CLASS)
+                error("method receiver is not a struct, class, or array value");
+            error("unknown method '" + c->getMethodName() + "' in " + obj.type.type_name);
         }
         if (auto a = dynamic_cast<const ArrayLiteralExp *>(e)) {
             TypeInfo t = expected && expected->base_type == VarType::ARRAY ? *expected : type(VarType::ARRAY, "Array");
