@@ -810,3 +810,52 @@ TEST(NestedReceiverTest, ClassOwnedStructStorageSupportsMixedNestedPaths) {
         "func main() -> int { var h = Holder(); var alias = h; "
         "var changed = alias.update(); return changed + h.selected.leaf.counter.value + h.sibling.value; }"), 94);
 }
+
+TEST(NestedReceiverTest, RetainedClassLeafSurvivesClassOwnedStructDestruction) {
+    EXPECT_EQ(run_llvm(
+        "class Counter { var value: int; constructor(v: int) { this.value = v; } "
+        "func valueOf() -> int { return this.value; } } "
+        "struct Inner { var counter: Counter; constructor() { this.counter = Counter(42); } } "
+        "class Holder { var inner: Inner; constructor() { this.inner.counter = Counter(42); } } "
+        "func keep() -> Counter { var h = Holder(); var saved = h.inner.counter; return saved; } "
+        "func main() -> int { var saved = keep(); return saved.valueOf(); }"), 42);
+}
+
+TEST(NestedReceiverTest, WholeClassOwnedStructCopiesAreRejectedClearly) {
+    EXPECT_THROW(llvm_emit_ir(
+        "struct Inner { var value: int; } class Holder { var inner: Inner; } "
+        "func main() -> int { var h = Holder(); var copy: Inner = h.inner; return copy.value; }"), CompileError);
+}
+
+TEST(NestedReceiverTest, StructBackingOwnerSurvivesArgumentEvaluation) {
+    EXPECT_EQ(run_llvm(
+        "struct Counter { var value: int; func add(n: int) -> int { "
+        "this.value = this.value + n; return this.value; } } "
+        "class Owner { var branch: Counter; constructor() { this.branch.value = 41; } } "
+        "class Holder { var owner: Owner?; constructor() { this.owner = Owner(); } "
+        "func drop() -> int { this.owner = null; return 1; } } "
+        "func main() -> int { var h = Holder(); if(h.owner == null) { return 0; } "
+        "return h.owner.branch.add(h.drop()); }"), 42);
+}
+
+TEST(NestedReceiverTest, ClassLeafReceiverSurvivesArgumentEvaluation) {
+    EXPECT_EQ(run_llvm(
+        "class Node { var value: int; constructor() { this.value = 41; } "
+        "func add(n: int) -> int { return this.value + n; } } "
+        "struct Branch { var node: Node?; } "
+        "class Owner { var branch: Branch; constructor() { this.branch.node = Node(); } } "
+        "class Holder { var owner: Owner?; constructor() { this.owner = Owner(); } "
+        "func drop() -> int { this.owner = null; return 1; } } "
+        "func main() -> int { var h = Holder(); if(h.owner == null) { return 0; } "
+        "if(h.owner.branch.node == null) { return 0; } return h.owner.branch.node.add(h.drop()); }"), 42);
+}
+
+TEST(NestedReceiverTest, StructFieldAssignmentPinsOwnerAcrossRightHandSide) {
+    EXPECT_EQ(run_llvm(
+        "struct Counter { var value: int; } "
+        "class Owner { var branch: Counter; } "
+        "class Holder { var owner: Owner?; constructor() { this.owner = Owner(); } "
+        "func drop() -> int { this.owner = null; return 41; } } "
+        "func main() -> int { var h = Holder(); if(h.owner == null) { return 0; } "
+        "var result = (h.owner.branch.value = h.drop()); return result; }"), 41);
+}

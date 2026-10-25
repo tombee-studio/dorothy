@@ -273,6 +273,44 @@ func main() {
 }
 ```
 
+
+#### Nested method receivers
+
+Struct methods can be called through fields at any nesting depth, including
+`outer.inner.method(...)` and `this.inner.method(...)`. The receiver aliases the
+selected nested value, so mutations affect that instance while leaving sibling
+fields and other outer values unchanged. Both VM and LLVM support nested value
+struct receivers and recursive calls through those receivers.
+
+```dorothy
+struct Counter {
+    var value: int;
+    func add(amount: int) -> int {
+        this.value = this.value + amount;
+        return this.value;
+    }
+}
+struct Container {
+    var counter: Counter;
+    func add(amount: int) -> int { return this.counter.add(amount); }
+}
+func main() -> int {
+    var box = Container();
+    return box.counter.add(2) + box.add(3); // 2 + 5 = 7
+}
+```
+
+LLVM also supports mixed paths through class and struct fields. Classes own
+backing storage for their struct fields; nested struct methods mutate that
+storage directly. Whole struct fields inside classes cannot be assigned or
+copied as values; copy their individual fields instead. Class-valued leaves
+copied into local class references retain normal ARC ownership. Nested class
+receivers keep their inherited methods and lexical `super` behavior. As with
+other class features, paths containing class instances require LLVM.
+
+Nullable receivers must be proved non-null before use. Missing fields or
+methods, primitive receivers, and incorrect argument counts are compile errors.
+
 ---
 
 ### Dynamic Arrays & Generics (`Array<T>` / `T[]`)

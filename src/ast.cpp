@@ -71,6 +71,35 @@ static int get_flat_index(const string& struct_name, const string& path) {
     throw CompileError(("no field '" + head + "' in struct " + struct_name).c_str());
 }
 
+struct VMStructReceiver {
+    string root;
+    string type;
+    int offset;
+};
+
+static VMStructReceiver vm_struct_receiver(Expression *expression) {
+    if (dynamic_cast<Variable *>(expression) || dynamic_cast<ThisExpr *>(expression)) {
+        string root = expression->getVarName();
+        auto type = g_var_struct_types.find(root);
+        if (type == g_var_struct_types.end()) throw CompileError("VM method receiver is not a struct value");
+        return {root, type->second, 0};
+    }
+    if (auto member = dynamic_cast<MemberAccess *>(expression)) {
+        auto parent = vm_struct_receiver(member->getObject());
+        int offset = parent.offset;
+        for (const auto &field : g_struct_defs.at(parent.type).fields) {
+            if (field.name == member->getMember()) {
+                if (field.type != VarType::STRUCT)
+                    throw CompileError(("field '" + field.name + "' is not a struct method receiver").c_str());
+                return {parent.root, field.struct_name, offset};
+            }
+            offset += field.type == VarType::STRUCT ? count_leaves(field.struct_name) : 1;
+        }
+        throw CompileError(("unknown struct receiver field: " + member->getMember()).c_str());
+    }
+    throw CompileError("VM method receiver must be a struct variable, this, or a struct field");
+}
+
 void DeclVar::compile(vector<Code>& ofs, map<string, int>& vars,
                       map<string, int>& functions, int offset) {
     if (!vars[_id]) {
@@ -130,30 +159,28 @@ void InitializedDeclVar::compile(vector<Code>& ofs, map<string, int>& vars,
     DeclVar::compile(ofs, vars, functions, offset);  // allocate slots + zero-init
 
     if (_type == VarType::STRUCT) {
-        // struct-to-struct copy: var a: P = b;
-        const string& raw_src = _init->getVarName();
-        string src_var = (raw_src == "$this" && !g_this_struct.empty()) ? "$this" : raw_src;
-        if (!src_var.empty() && g_var_struct_types.count(src_var)) {
-            const string& src_struct = g_var_struct_types[src_var];
-            if (src_struct != _struct_name)
-                throw CompileError(("cannot copy struct '" + src_struct +
+        // Copy the selected value's leaves, including a nested hidden receiver.
+        if (!dynamic_cast<StructInit *>(_init)) {
+            auto source = vm_struct_receiver(_init);
+            if (source.type != _struct_name)
+                throw CompileError(("cannot copy struct '" + source.type +
                                     "' into variable of type '" + _struct_name + "'").c_str());
-            int n_leaves = count_leaves(_struct_name);
-            int src_base = vars.at(src_var);
-            int dst_base = vars.at(_id);
-            for (int fi = 0; fi < n_leaves; fi++) {
-                int src_slot = src_base + fi;
-                int dst_slot = dst_base + fi;
-                // load from src field slot
-                ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
-                ofs.push_back(Code::makeCode(Code::PUSHI, src_slot, 0));
+            int leaves = count_leaves(_struct_name);
+            for (int fi = 0; fi < leaves; ++fi) {
+                if (source.root == "$this" && vars.count("$thisptr")) {
+                    Variable("$thisptr").compile(ofs, vars, functions, offset);
+                    ofs.push_back(Code::makeCode(Code::POP, 2, 0));
+                    ofs.push_back(Code::makeCode(Code::PUSHI, source.offset + fi, 0));
+                } else {
+                    ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
+                    ofs.push_back(Code::makeCode(Code::PUSHI, vars.at(source.root) + source.offset + fi, 0));
+                }
                 ofs.push_back(Code::makeCode(Code::POP, 3, 0));
                 ofs.push_back(Code::makeCode(Code::SUB, 0, 0));
                 ofs.push_back(Code::makeCode(Code::LOAD, 2, 2));
                 ofs.push_back(Code::makeCode(Code::PUSHR, 2, 0));
-                // store to dst field slot
                 ofs.push_back(Code::makeCode(Code::MOVE, 2, 0));
-                ofs.push_back(Code::makeCode(Code::PUSHI, dst_slot, 0));
+                ofs.push_back(Code::makeCode(Code::PUSHI, vars.at(_id) + fi, 0));
                 ofs.push_back(Code::makeCode(Code::POP, 3, 0));
                 ofs.push_back(Code::makeCode(Code::SUB, 0, 0));
                 ofs.push_back(Code::makeCode(Code::POP, 3, 0));
@@ -1221,11 +1248,8 @@ void CallMethodExp::print(ostream& os, int tab) {
 
 void CallMethodExp::compile(vector<Code>& codes, map<string, int>& vars,
                             map<string, int>& functions, int offset) {
-    string receiver = _object->getVarName();
-    if ((!dynamic_cast<Variable *>(_object) && !dynamic_cast<ThisExpr *>(_object)) ||
-        !g_var_struct_types.count(receiver))
-        throw CompileError("VM method receiver must be a struct variable or this");
-    const auto &def = g_struct_defs.at(g_var_struct_types.at(receiver));
+    auto receiver = vm_struct_receiver(_object);
+    const auto &def = g_struct_defs.at(receiver.type);
     auto it = def.methods.find(_method_name);
     if (it == def.methods.end()) throw CompileError(("unknown struct method: " + _method_name).c_str());
     if (_args.size() != it->second->params.size()) throw CompileError("incorrect struct method argument count");
@@ -1233,11 +1257,16 @@ void CallMethodExp::compile(vector<Code>& codes, map<string, int>& vars,
         if (is_float_type(it->second->params[i]->getType()) != is_float_type(_args[i]->compile_type(vars)))
             throw CompileError("VM struct methods require matching integer/floating argument representations");
 
-    if (receiver == "$this" && vars.count("$thisptr"))
+    if (receiver.root == "$this" && vars.count("$thisptr"))
         Variable("$thisptr").compile(codes, vars, functions, offset);
-    else if (receiver == "$this")
-        Variable("$this").lcompile(codes, vars, functions, offset);
-    else _object->lcompile(codes, vars, functions, offset);
+    else Variable(receiver.root).lcompile(codes, vars, functions, offset);
+    if (receiver.offset) {
+        codes.push_back(Code::makeCode(Code::POP, 2, 0));
+        codes.push_back(Code::makeCode(Code::PUSHI, receiver.offset, 0));
+        codes.push_back(Code::makeCode(Code::POP, 3, 0));
+        codes.push_back(Code::makeCode(Code::SUB, 0, 0));
+        codes.push_back(Code::makeCode(Code::PUSHR, 2, 0));
+    }
     for (auto arg : _args) arg->compile(codes, vars, functions, offset);
     string target = def.name + "." + _method_name;
     int address = functions.count(target) ? functions.at(target) : 0;

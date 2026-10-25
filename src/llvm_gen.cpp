@@ -804,6 +804,15 @@ static TypeInfo resolve_expr_type(LLVMGenCtx &ctx, const Expression *expr) {
     }
     if (auto call = dynamic_cast<const CallMethodExp *>(expr)) {
         auto receiver = resolve_expr_type(ctx, call->getObject());
+        if (receiver.base_type == VarType::STRUCT && g_struct_defs.count(receiver.type_name)) {
+            const auto &methods = g_struct_defs.at(receiver.type_name).methods;
+            auto method = methods.find(call->getMethodName());
+            if (method != methods.end()) {
+                auto result = make_type(method->second->ret_type, method->second->ret_type_name);
+                result.is_nullable = method->second->is_ret_nullable;
+                return result;
+            }
+        }
         if (receiver.base_type == VarType::CLASS && g_class_defs.count(receiver.type_name)) {
             auto method = g_class_defs.at(receiver.type_name).getMethod(call->getMethodName());
             if (method) {
@@ -827,7 +836,21 @@ static string resolve_expr_class_name(LLVMGenCtx &ctx, const Expression *expr) {
 
 // Select the actual flattened leaf addresses of a value receiver. A nested
 // struct aliases its owner's storage; it is never copied for a method call.
-static map<string, string> struct_receiver_fields(LLVMGenCtx &ctx, Expression *expr) {
+static void register_struct_subfields(LLVMGenCtx &ctx, const string &root,
+                                     const string &name, const string &prefix = "") {
+    for (const auto &field : g_struct_defs.at(name).fields) {
+        if (field.type != VarType::STRUCT) continue;
+        string path = prefix.empty() ? field.name : prefix + "." + field.name;
+        ctx.struct_subfield_types[root][path] = field.struct_name;
+        register_struct_subfields(ctx, root, field.struct_name, path);
+    }
+}
+
+static void pin_class_owner(LLVMGenCtx &, Expression *, const string &, vector<string> &);
+static void release_class_owners(LLVMGenCtx &, const vector<string> &);
+
+static map<string, string> struct_receiver_fields(LLVMGenCtx &ctx, Expression *expr,
+                                                 vector<string> *owners = nullptr) {
     auto receiver = resolve_expr_type(ctx, expr);
     if (receiver.base_type != VarType::STRUCT || !g_struct_defs.count(receiver.type_name))
         throw CompileError("method receiver is not a struct value");
@@ -849,7 +872,7 @@ static map<string, string> struct_receiver_fields(LLVMGenCtx &ctx, Expression *e
     if (auto member = dynamic_cast<MemberAccess *>(expr)) {
         auto parent = resolve_expr_type(ctx, member->getObject());
         if (parent.base_type == VarType::STRUCT) {
-            auto parent_fields = struct_receiver_fields(ctx, member->getObject());
+            auto parent_fields = struct_receiver_fields(ctx, member->getObject(), owners);
             for (const auto &leaf : leaves) {
                 string key = member->getMember() + "." + leaf.path;
                 auto field = parent_fields.find(key);
@@ -865,6 +888,7 @@ static map<string, string> struct_receiver_fields(LLVMGenCtx &ctx, Expression *e
             string object = ctx.fresh("receiver.object");
             ctx.out << "  " << object << " = inttoptr i64 " << value << " to ptr\n";
             ctx.out << "  call void @_dorothy_check_null(ptr " << object << ")\n";
+            if (owners) pin_class_owner(ctx, member->getObject(), object, *owners);
             string slot = ctx.fresh("receiver.slot");
             ctx.out << "  " << slot << " = getelementptr %class." << parent.type_name
                     << ", ptr " << object << ", i32 0, i32 " << (field + 2) << "\n";
@@ -905,6 +929,20 @@ static bool is_class_returning_call(LLVMGenCtx& ctx, Expression* expr) {
         }
     }
     return false;
+}
+
+// Capture the actual owning instance before argument/RHS evaluation can replace
+// an alias to it. Calls returning a class already transfer an owned reference.
+static void pin_class_owner(LLVMGenCtx &ctx, Expression *source, const string &object,
+                            vector<string> &owners) {
+    if (!is_class_returning_call(ctx, source))
+        ctx.out << "  call void @_dorothy_retain(ptr " << object << ")\n";
+    owners.push_back(object);
+}
+
+static void release_class_owners(LLVMGenCtx &ctx, const vector<string> &owners) {
+    for (auto it = owners.rbegin(); it != owners.rend(); ++it)
+        ctx.out << "  call void @_dorothy_release(ptr " << *it << ")\n";
 }
 
 // ===== Class emission helpers =====
@@ -1375,6 +1413,8 @@ void InitializedDeclVar::llvm_emit(LLVMGenCtx& ctx) {
                 }
                 return;
             }
+            if (resolve_expr_type(ctx, ma_src).base_type == VarType::STRUCT)
+                throw CompileError("copying class-owned struct fields is not supported; copy individual fields instead");
         }
 
         // struct-to-struct copy: var a: P = b;
@@ -1843,6 +1883,7 @@ void Function::llvm_emit(LLVMGenCtx& ctx) {
         int receiver_index = 0;
         ctx.this_var = "$this";
         ctx.struct_var_types["$this"] = _receiver_struct;
+        register_struct_subfields(ctx, "$this", _receiver_struct);
         for (auto &leaf : get_leaf_fields(_receiver_struct)) {
             string reg = "%receiver." + to_string(receiver_index++);
             llvm_params.push_back({"ptr", reg});
@@ -1975,7 +2016,30 @@ string Assign::llvm_rval(LLVMGenCtx& ctx) {
         }
     }
 
-    string ptr = _leftside->llvm_lval(ctx);
+    vector<string> owners;
+    string ptr;
+    auto member = dynamic_cast<MemberAccess *>(_leftside);
+    auto receiver = member ? resolve_expr_type(ctx, member->getObject()) : TypeInfo{};
+    if (member && receiver.base_type == VarType::STRUCT) {
+        auto fields = struct_receiver_fields(ctx, member->getObject(), &owners);
+        auto field = fields.find(member->getMember());
+        if (field == fields.end()) throw CompileError("struct fields must be assigned field-by-field");
+        ptr = field->second;
+    } else if (member && receiver.base_type == VarType::CLASS && g_class_defs.count(receiver.type_name)) {
+        const auto &definition = g_class_defs.at(receiver.type_name);
+        int field = definition.fieldIndex(member->getMember());
+        if (field < 0) throw CompileError("unknown assignment field");
+        if (definition.fields[field].type == VarType::STRUCT)
+            throw CompileError("struct fields must be assigned field-by-field");
+        string value = member->getObject()->llvm_rval(ctx);
+        string object = ctx.fresh("assign.owner");
+        ctx.out << "  " << object << " = inttoptr i64 " << value << " to ptr\n";
+        ctx.out << "  call void @_dorothy_check_null(ptr " << object << ")\n";
+        pin_class_owner(ctx, member->getObject(), object, owners);
+        ptr = ctx.fresh("assign.field");
+        ctx.out << "  " << ptr << " = getelementptr %class." << receiver.type_name
+                << ", ptr " << object << ", i32 0, i32 " << (field + 2) << "\n";
+    } else ptr = _leftside->llvm_lval(ctx);
     string val = _expr->llvm_rval(ctx);  // in canonical form
     VarType tgt_declared = _leftside->llvm_declared_type(ctx);
     if (tgt_declared == VarType::CLASS) {
@@ -1994,18 +2058,21 @@ string Assign::llvm_rval(LLVMGenCtx& ctx) {
         ctx.out << "  " << old_val << " = load ptr, ptr " << ptr << "\n";
         ctx.out << "  store ptr " << ptr_val << ", ptr " << ptr << "\n";
         ctx.out << "  call void @_dorothy_release(ptr " << old_val << ")\n";
+        release_class_owners(ctx, owners);
         return val;
     }
     if (tgt_declared == VarType::STRING || tgt_declared == VarType::ARRAY) {
         string ptr_val = ctx.fresh(tgt_declared == VarType::ARRAY ? "assign.arr" : "assign.str");
         ctx.out << "  " << ptr_val << " = inttoptr i64 " << val << " to ptr\n";
         ctx.out << "  store ptr " << ptr_val << ", ptr " << ptr << "\n";
+        release_class_owners(ctx, owners);
         return val;
     }
     VarType src_canonical = _expr->llvm_etype(ctx);
     string tstr = llvm_type_str(tgt_declared);
     string store_val = llvm_coerce(ctx, val, src_canonical, tgt_declared);
     ctx.out << "  store " << tstr << " " << store_val << ", ptr " << ptr << "\n";
+    release_class_owners(ctx, owners);
     return val;  // return canonical source value for chained assignment
 }
 
@@ -2649,17 +2716,17 @@ string ArrayLiteralExp::llvm_rval(LLVMGenCtx& ctx) {
 // ===== CallMethodExp =====
 
 string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
-    string struct_var = _object->getVarName();
-    if (dynamic_cast<ThisExpr *>(_object)) struct_var = ctx.this_var;
-    if ((dynamic_cast<Variable *>(_object) || dynamic_cast<ThisExpr *>(_object)) &&
-        ctx.struct_var_types.count(struct_var)) {
-        const auto &def = g_struct_defs.at(ctx.struct_var_types.at(struct_var));
+    auto receiver = resolve_expr_type(ctx, _object);
+    if (receiver.base_type == VarType::STRUCT && g_struct_defs.count(receiver.type_name)) {
+        const auto &def = g_struct_defs.at(receiver.type_name);
         auto method = def.methods.find(_method_name);
         if (method == def.methods.end()) throw CompileError(("unknown struct method: " + _method_name).c_str());
         if (_args.size() != method->second->params.size()) throw CompileError("incorrect struct method argument count");
         vector<pair<string, string>> args;
+        vector<string> owners;
+        auto fields = struct_receiver_fields(ctx, _object, &owners);
         for (auto &leaf : get_leaf_fields(def.name))
-            args.push_back({"ptr", ctx.struct_field_ptrs.at(struct_var).at(leaf.path)});
+            args.push_back({"ptr", fields.at(leaf.path)});
         auto user_args = prepareCallArgs(ctx, def.name + "." + _method_name, _args);
         args.insert(args.end(), user_args.begin(), user_args.end());
         string result = ctx.fresh("struct.method");
@@ -2670,6 +2737,7 @@ string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
             ctx.out << args[i].first << " " << args[i].second;
         }
         ctx.out << ")\n";
+        release_class_owners(ctx, owners);
         return result;
     }
 
@@ -2791,6 +2859,9 @@ string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
 
     }
 
+    vector<string> owners;
+    pin_class_owner(ctx, _object, obj_ptr, owners);
+
     // Build signature and call
     string ret_str = (minfo->ret_type == VarType::STRUCT) ? "void" :
                      (is_float_type(minfo->ret_type) ? "double" : "i64");
@@ -2830,6 +2901,7 @@ string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
     }
     ctx.out << ")\n";
 
+    release_class_owners(ctx, owners);
     if (ret_str == "void") return "0";
     return call_res;
 }

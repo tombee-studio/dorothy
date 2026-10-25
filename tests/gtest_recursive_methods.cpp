@@ -164,3 +164,70 @@ TEST(RecursiveMethodTest, NativeReferenceReturnsTransferOwnership) {
     EXPECT_NE(main.find("unused.method.ptr"), string::npos);
     EXPECT_EQ(main.find("call void @_dorothy_retain(ptr %init.ptr"), string::npos);
 }
+
+TEST(NestedStructReceiverTest, DeepPathAndSiblingStorageBothBackends) {
+    auto source = recursive_counter +
+        "struct Branch { var padding: int; var selected: Counter; var sibling: Counter; } "
+        "struct Root { var padding: int; var branch: Branch; var sibling: Counter; } "
+        "func main() -> int { var root = Root(); root.branch.sibling.calls = 3; root.sibling.calls = 5; "
+        "var value = 7 + root.branch.selected.factorial(4); "
+        "return value + root.branch.selected.calls + root.branch.sibling.calls + root.sibling.calls; }";
+    EXPECT_EQ(run_methods_vm(source), 43);
+    EXPECT_EQ(run_methods_native(source), 43);
+}
+
+TEST(NestedStructReceiverTest, ThisFieldSelectsNestedReceiverBothBackends) {
+    auto source = recursive_counter +
+        "struct Branch { var padding: int; var selected: Counter; var sibling: Counter; "
+        "func run(n: int) -> int { return this.selected.factorial(n) + this.sibling.calls; } } "
+        "struct Root { var padding: int; var branch: Branch; var sibling: Counter; "
+        "func run(n: int) -> int { return this.branch.run(n) + this.sibling.calls; } } "
+        "func main() -> int { var root = Root(); root.branch.sibling.calls = 3; root.sibling.calls = 5; "
+        "var value = 7 + root.run(4); return value + root.branch.selected.calls; }";
+    EXPECT_EQ(run_methods_vm(source), 43);
+    EXPECT_EQ(run_methods_native(source), 43);
+}
+
+TEST(NestedStructReceiverTest, IndependentOuterValuesKeepIndependentNestedInstances) {
+    auto source = recursive_counter +
+        "struct Root { var padding: int; var inner: Counter; } "
+        "func main() -> int { var a = Root(); var b = Root(); "
+        "var result = a.inner.factorial(3) + b.inner.factorial(2); "
+        "return result + a.inner.calls * 10 + b.inner.calls; }";
+    EXPECT_EQ(run_methods_vm(source), 40);
+    EXPECT_EQ(run_methods_native(source), 40);
+}
+
+TEST(NestedStructReceiverTest, ClassOwnedStructMethodsUseOriginalStorage) {
+    EXPECT_EQ(run_methods_native(recursive_counter +
+        "struct Branch { var padding: int; var selected: Counter; var sibling: Counter; "
+        "func run(n: int) -> int { return this.selected.factorial(n); } } "
+        "class Holder { var branch: Branch; var other: Branch; "
+        "func run(n: int) -> int { return this.branch.run(n); } } "
+        "func main() -> int { var h = Holder(); var alias = h; h.other.sibling.calls = 9; "
+        "var result = alias.run(4); return result + h.branch.selected.calls + h.other.sibling.calls; }"), 37);
+}
+
+TEST(NestedStructReceiverTest, InvalidNestedPathsFailBeforeExecution) {
+    for (const auto &suffix : {
+        "return r.inner.missing();",
+        "return r.missing.factorial(2);",
+        "return r.padding.factorial(2);",
+        "return r.inner.factorial();"}) {
+        auto source = recursive_counter +
+            "struct Root { var padding: int; var inner: Counter; } "
+            "func main() -> int { var r = Root(); " + suffix + " }";
+        EXPECT_THROW(run_methods_vm(source), CompileError) << suffix;
+        EXPECT_THROW(run_methods_native(source), CompileError) << suffix;
+    }
+}
+
+TEST(NestedStructReceiverTest, MethodLocalNestedStructCopyHasIndependentValueStorage) {
+    auto source = recursive_counter +
+        "struct Root { var padding: int; var inner: Counter; "
+        "func run() -> int { var copy: Counter = this.inner; "
+        "var value = copy.factorial(3); return value + copy.calls + this.inner.calls; } } "
+        "func main() -> int { var root = Root(); return root.run(); }";
+    EXPECT_EQ(run_methods_vm(source), 9);
+    EXPECT_EQ(run_methods_native(source), 9);
+}
