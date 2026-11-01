@@ -166,7 +166,7 @@
       "patterns": [
         {
           "name": "support.type.primitive.dorothy",
-          "match": "\\b(int|long|char|float|double|string|String)\\b"
+          "match": "\\b(int|long|char|float|double|string|String|pointer)\\b"
         },
         {
           "name": "entity.name.type.dorothy",

@@ -9,7 +9,7 @@ namespace fs = std::filesystem;
 
 static bool is_type_keyword(Token::Type t) {
     return t == Token::KW_INT || t == Token::KW_CHAR || t == Token::KW_LONG ||
-           t == Token::KW_FLOAT || t == Token::KW_DOUBLE || t == Token::KW_STRING;
+           t == Token::KW_FLOAT || t == Token::KW_DOUBLE || t == Token::KW_STRING || t == Token::KW_POINTER;
 }
 
 static VarType token_to_vartype(Token::Type t) {
@@ -20,6 +20,7 @@ static VarType token_to_vartype(Token::Type t) {
         case Token::KW_FLOAT:  return VarType::FLOAT;
         case Token::KW_DOUBLE: return VarType::DOUBLE;
         case Token::KW_STRING: return VarType::STRING;
+        case Token::KW_POINTER: return VarType::POINTER;
         default:               return VarType::LONG;
     }
 }
@@ -243,7 +244,8 @@ void Parser::parse_struct_def(vector<Token> &tokens) {
 
             if (ti.is_array()) {
                 string elem_name = ti.get_element_type().type_name.empty() ?
-                    (ti.get_element_type().base_type == VarType::STRING ? "string" :
+                    (ti.get_element_type().base_type == VarType::POINTER ? "pointer" :
+                 ti.get_element_type().base_type == VarType::STRING ? "string" :
                      ti.get_element_type().base_type == VarType::INT ? "int" :
                      ti.get_element_type().base_type == VarType::DOUBLE ? "double" : "long")
                     : ti.get_element_type().type_name;
@@ -377,7 +379,8 @@ void Parser::parse_class_def(vector<Token> &tokens) {
 
             if (ti.is_array()) {
                 string elem_name = ti.get_element_type().type_name.empty() ?
-                    (ti.get_element_type().base_type == VarType::STRING ? "string" :
+                    (ti.get_element_type().base_type == VarType::POINTER ? "pointer" :
+                 ti.get_element_type().base_type == VarType::STRING ? "string" :
                      ti.get_element_type().base_type == VarType::INT ? "int" :
                      ti.get_element_type().base_type == VarType::DOUBLE ? "double" : "long")
                     : ti.get_element_type().type_name;
@@ -449,7 +452,7 @@ void Parser::parse_class_def(vector<Token> &tokens) {
             minfo->params = params_decl;
             minfo->ret_type = ret_type;
             minfo->ret_type_name = ret_type_name;
-            minfo->is_ret_nullable = is_ret_nullable;
+            minfo->is_ret_nullable = is_ret_nullable || ret_type == VarType::POINTER;
             minfo->body = nullptr;
             minfo->is_abstract = true;
             minfo->is_override = false;
@@ -513,6 +516,8 @@ void Parser::parse_class_def(vector<Token> &tokens) {
             }
             if (existing_vtable_idx >= 0) {
                 auto inherited = cdef.vtable_methods[existing_vtable_idx];
+                if ((inherited->ret_type == VarType::POINTER) != (ret_type == VarType::POINTER))
+                    throw ParseError("override must preserve the pointer return ABI", mname);
                 if (is_float_type(inherited->ret_type) != is_float_type(ret_type))
                     throw ParseError("override must preserve the floating-point return ABI", mname);
                 if (inherited->params.size() == params_decl.size()) {
@@ -527,7 +532,7 @@ void Parser::parse_class_def(vector<Token> &tokens) {
             minfo->params = params_decl;
             minfo->ret_type = ret_type;
             minfo->ret_type_name = ret_type_name;
-            minfo->is_ret_nullable = is_ret_nullable;
+            minfo->is_ret_nullable = is_ret_nullable || ret_type == VarType::POINTER;
             minfo->body = body;
             minfo->is_abstract = false;
             minfo->is_override = is_override || (existing_vtable_idx >= 0);
@@ -609,7 +614,8 @@ Function *Parser::parse_function(vector<Token> &tokens) {
         if (ret_ti.is_array()) {
             ret_type = VarType::ARRAY;
             string elem_name = ret_ti.get_element_type().type_name.empty() ?
-                (ret_ti.get_element_type().base_type == VarType::STRING ? "string" :
+                (ret_ti.get_element_type().base_type == VarType::POINTER ? "pointer" :
+                 ret_ti.get_element_type().base_type == VarType::STRING ? "string" :
                  ret_ti.get_element_type().base_type == VarType::INT ? "int" :
                  ret_ti.get_element_type().base_type == VarType::DOUBLE ? "double" : "long")
                 : ret_ti.get_element_type().type_name;
@@ -619,6 +625,8 @@ Function *Parser::parse_function(vector<Token> &tokens) {
         }
     }
     auto block = parse_block(tokens);
+    if (id_token.id == "main" && ret_type == VarType::POINTER)
+        throw ParseError("main must return an integer, not pointer", id_token);
     auto function = new Function(id_token.id, declargs, block, ret_type, ret_struct_name,
                                  has_explicit_ret_type, is_ret_nullable);
     function->setReturnTypeInfo(return_ti);
@@ -660,7 +668,8 @@ DeclVar *Parser::parse_declparam(vector<Token> &tokens) {
     TypeInfo ti = parse_type(tokens);
     if (ti.is_array()) {
         string elem_name = ti.get_element_type().type_name.empty() ?
-            (ti.get_element_type().base_type == VarType::STRING ? "string" :
+            (ti.get_element_type().base_type == VarType::POINTER ? "pointer" :
+                 ti.get_element_type().base_type == VarType::STRING ? "string" :
              ti.get_element_type().base_type == VarType::INT ? "int" :
              ti.get_element_type().base_type == VarType::DOUBLE ? "double" : "long")
             : ti.get_element_type().type_name;
@@ -844,7 +853,8 @@ Statement *Parser::parse_declvarst(vector<Token> &tokens) {
     // Dynamic Array type: var name: Array<T> / T[] [= expr];
     if (ti.is_array()) {
         string elem_name = ti.get_element_type().type_name.empty() ?
-            (ti.get_element_type().base_type == VarType::STRING ? "string" :
+            (ti.get_element_type().base_type == VarType::POINTER ? "pointer" :
+                 ti.get_element_type().base_type == VarType::STRING ? "string" :
              ti.get_element_type().base_type == VarType::INT ? "int" :
              ti.get_element_type().base_type == VarType::DOUBLE ? "double" : "long")
             : ti.get_element_type().type_name;
@@ -1202,6 +1212,8 @@ TypeInfo Parser::parse_type(vector<Token> &tokens) {
         _pos++;
     }
 
+    if (ti.base_type == VarType::POINTER) ti.is_nullable = true;
+
     while (_pos + 1 < (int)tokens.size() && tokens[_pos].type == (Token::Type)'[' && tokens[_pos + 1].type == (Token::Type)']') {
         _pos += 2; // consume '[]'
         TypeInfo arr_ti;
@@ -1252,6 +1264,12 @@ Expression *Parser::parse_term(vector<Token> &tokens) {
         if (name.type == Token::NONE)
             throw ParseError("expected method name after super.", tokens[_pos]);
         return new CallMethodExp(new SuperExpr(base), name.id, parse_arg(tokens));
+    }
+    if (consume(tokens, Token::KW_POINTER).type != Token::NONE) {
+        if (consume(tokens, (Token::Type)'.').type == Token::NONE ||
+            consume(tokens, Token::KW_NULL).type == Token::NONE)
+            throw ParseError("expected pointer.null", tokens[_pos]);
+        return new NullExp(VarType::POINTER);
     }
     if (tokens[_pos].type == Token::KW_NULL) {
         _pos++;

@@ -503,7 +503,7 @@ static string emitCImportedCall(LLVMGenCtx& ctx, const string& id,
                     }
                 } else {
                     VarType declared = args[i]->llvm_declared_type(ctx);
-                    if (declared == VarType::STRING || dynamic_cast<StringExp*>(args[i])) {
+                    if (declared == VarType::STRING || declared == VarType::POINTER || dynamic_cast<StringExp*>(args[i])) {
                         string r = ctx.fresh("va.ptr");
                         ctx.out << "  " << r << " = inttoptr i64 " << val << " to ptr\n";
                         final_args.push_back({"ptr", r});
@@ -648,7 +648,7 @@ static void alloc_struct_fields(LLVMGenCtx& ctx, const string& var_id,
             ctx.out << "  " << ptr << " = alloca " << tstr << "\n";
             if (is_float_type(field.type))
                 ctx.out << "  store " << tstr << " 0.0, ptr " << ptr << "\n";
-            else if (field.type == VarType::CLASS || field.type == VarType::STRING || field.type == VarType::ARRAY)
+            else if (field.type == VarType::CLASS || field.type == VarType::STRING || field.type == VarType::ARRAY || field.type == VarType::POINTER)
                 ctx.out << "  store ptr null, ptr " << ptr << "\n";
             else
                 ctx.out << "  store " << tstr << " 0, ptr " << ptr << "\n";
@@ -660,6 +660,11 @@ static void alloc_struct_fields(LLVMGenCtx& ctx, const string& var_id,
 // Convert a value in canonical form to the declared target LLVM type.
 static string llvm_coerce(LLVMGenCtx& ctx, const string& val,
                           VarType from_canonical, VarType to_declared) {
+    if (to_declared == VarType::POINTER) {
+        string ptr = ctx.fresh("pointer");
+        ctx.out << "  " << ptr << " = inttoptr i64 " << val << " to ptr\n";
+        return ptr;
+    }
     if (from_canonical == VarType::DOUBLE && !is_float_type(to_declared)) {
         // double → integer
         string conv = ctx.fresh("conv");
@@ -696,7 +701,7 @@ static string llvm_coerce(LLVMGenCtx& ctx, const string& val,
 // Ensure a value is in its canonical form (i64 for ints, double for floats).
 static string llvm_to_canonical(LLVMGenCtx& ctx, const string& val,
                                 VarType declared) {
-    if (declared == VarType::CLASS || declared == VarType::STRING || declared == VarType::ARRAY) {
+    if (declared == VarType::CLASS || declared == VarType::STRING || declared == VarType::ARRAY || declared == VarType::POINTER) {
         string r = ctx.fresh("reference.i64");
         ctx.out << "  " << r << " = ptrtoint ptr " << val << " to i64\n";
         return r;
@@ -1003,6 +1008,7 @@ static void emit_class_constructor(LLVMGenCtx& ctx, const string& cname, const C
     ctx.sret_field_ptrs.clear();
     ctx.current_ret_struct.clear();
     ctx.current_ret_is_class = false;
+    ctx.current_ret_is_pointer = false;
     ctx.current_method_ret_type = VarType::LONG;
     ctx.terminated = false;
     ctx.current_function = cname + ".constructor";
@@ -1073,6 +1079,7 @@ static void emit_class_method(LLVMGenCtx& ctx, const string& cname, MethodInfo* 
     ctx.sret_field_ptrs.clear();
     ctx.current_ret_struct = (m->ret_type == VarType::STRUCT) ? m->ret_type_name : "";
     ctx.current_ret_is_class = (m->ret_type == VarType::CLASS);
+    ctx.current_ret_is_pointer = (m->ret_type == VarType::POINTER);
     ctx.current_method_ret_type = canonical_type(m->ret_type);
     ctx.terminated = false;
     ctx.current_function = cname + "." + m->name;
@@ -1080,7 +1087,8 @@ static void emit_class_method(LLVMGenCtx& ctx, const string& cname, MethodInfo* 
     ctx.push_scope();
 
     string ret_llvm = (m->ret_type == VarType::STRUCT) ? "void" :
-                      (is_float_type(m->ret_type) ? "double" : "i64");
+                      (m->ret_type == VarType::POINTER ? "ptr" :
+                       (is_float_type(m->ret_type) ? "double" : "i64"));
 
     vector<pair<string, string>> fn_params;
     fn_params.push_back({"ptr", "%this"});
@@ -1109,7 +1117,8 @@ static void emit_class_method(LLVMGenCtx& ctx, const string& cname, MethodInfo* 
         if (m->ret_type == VarType::STRUCT) {
             ctx.out << "  ret void\n";
         } else {
-            ctx.out << "  ret " << ret_llvm << (is_float_type(m->ret_type) ? " 0.0\n" : " 0\n");
+            ctx.out << "  ret " << ret_llvm << (m->ret_type == VarType::POINTER ? " null\n" :
+                (is_float_type(m->ret_type) ? " 0.0\n" : " 0\n"));
         }
     }
     ctx.out << "}\n\n";
@@ -1266,13 +1275,13 @@ void DeclVar::llvm_emit(LLVMGenCtx& ctx) {
         ctx.register_class_var(ptr);
         return;
     }
-    if (_type == VarType::STRING) {
+    if (_type == VarType::STRING || _type == VarType::POINTER) {
         int n = ctx.counter++;
         string ptr = "%" + _id + ".addr." + to_string(n);
         ctx.out << "  " << ptr << " = alloca ptr\n";
         ctx.out << "  store ptr null, ptr " << ptr << "\n";
         ctx.vars[_id] = ptr;
-        ctx.var_types[_id] = VarType::STRING;
+        ctx.var_types[_id] = _type;
         if (_is_const) ctx.const_vars.insert(_id);
         return;
     }
@@ -1695,6 +1704,14 @@ void ReturnSt::llvm_emit(LLVMGenCtx& ctx) {
     string val = _exp->llvm_rval(ctx);
     VarType etype = _exp->llvm_etype(ctx);
 
+    if (ctx.current_ret_is_pointer) {
+        string pointer = llvm_coerce(ctx, val, etype, VarType::POINTER);
+        ctx.emit_release_all_scopes();
+        ctx.out << "  ret ptr " << pointer << "\n";
+        ctx.terminated = true;
+        return;
+    }
+
     // If returning a CLASS, retain it before releasing local scopes
     if (ctx.current_ret_is_class) {
         string ret_ptr = ctx.fresh("ret.class.ptr");
@@ -1756,7 +1773,7 @@ prepareCallArgs(LLVMGenCtx& ctx, const std::string& id,
             VarType src_c = args[i]->llvm_etype(ctx);
             if (pit != ctx.func_param_info.end() && i < (int)pit->second.size()) {
                 VarType tgt = pit->second[i].type;
-                if (tgt == VarType::CLASS || tgt == VarType::STRING || tgt == VarType::ARRAY) {
+                if (tgt == VarType::CLASS || tgt == VarType::STRING || tgt == VarType::ARRAY || tgt == VarType::POINTER) {
                     string r = ctx.fresh("arg.ptr");
                     ctx.out << "  " << r << " = inttoptr i64 " << val << " to ptr\n";
                     result.push_back({"ptr", r});
@@ -1786,11 +1803,12 @@ void CallFuncSt::llvm_emit(LLVMGenCtx& ctx) {
     // Prepare all args (emit conversions) before the call instruction
     auto prepared = prepareCallArgs(ctx, _id, _args);
     string reg = ctx.fresh("call");
+    string return_type = ctx.func_return_pointer.count(_id) ? "ptr" : "i64";
     bool is_imported = ctx.defined_funcs.find(_id) == ctx.defined_funcs.end();
     if (is_imported) {
-        ctx.out << "  " << reg << " = call i64 (...) @" << _id << "(";
+        ctx.out << "  " << reg << " = call " << return_type << " (...) @" << _id << "(";
     } else {
-        ctx.out << "  " << reg << " = call i64 @" << _id << "(";
+        ctx.out << "  " << reg << " = call " << return_type << " @" << _id << "(";
     }
     for (int i = 0; i < (int)prepared.size(); i++) {
         if (i > 0) ctx.out << ", ";
@@ -1823,6 +1841,8 @@ void Function::llvm_pre_register(LLVMGenCtx& ctx) {
         ctx.func_return_struct[_id] = _ret_struct_name;
     if (_ret_type == VarType::CLASS)
         ctx.func_return_class.insert(_id);
+    if (_ret_type == VarType::POINTER)
+        ctx.func_return_pointer.insert(_id);
     vector<ParamInfo> pinfo;
     vector<VarType> flat_types;
     for (auto* arg : _args) {
@@ -1855,6 +1875,7 @@ void Function::llvm_emit(LLVMGenCtx& ctx) {
     ctx.sret_field_ptrs.clear();
     ctx.current_ret_struct = (_ret_type == VarType::STRUCT) ? _ret_struct_name : "";
     ctx.current_ret_is_class = (_ret_type == VarType::CLASS);
+    ctx.current_ret_is_pointer = (_ret_type == VarType::POINTER);
     ctx.current_method_ret_type = _receiver_struct.empty() ? VarType::LONG : canonical_type(_ret_type);
     ctx.terminated = false;
     ctx.current_function = _id;
@@ -1868,7 +1889,8 @@ void Function::llvm_emit(LLVMGenCtx& ctx) {
     llvm_pre_register(ctx);
 
     string ret_llvm = is_main ? "i32" : (returns_struct ? "void" :
-        (is_float_type(ctx.current_method_ret_type) ? "double" : "i64"));
+        (ctx.current_ret_is_pointer ? "ptr" :
+         (is_float_type(ctx.current_method_ret_type) ? "double" : "i64")));
 
     // Build LLVM param list: [sret ptrs...] [expanded field params...]
     vector<pair<string, string>> llvm_params;
@@ -1942,7 +1964,7 @@ void Function::llvm_emit(LLVMGenCtx& ctx) {
         if (returns_struct)
             ctx.out << "  ret void\n";
         else
-            ctx.out << "  ret " << ret_llvm << (ret_llvm == "double" ? " 0.0\n" : " 0\n");
+            ctx.out << "  ret " << ret_llvm << (ret_llvm == "ptr" ? " null\n" : (ret_llvm == "double" ? " 0.0\n" : " 0\n"));
     }
     ctx.out << "}\n\n";
 }
@@ -2251,7 +2273,7 @@ string MemberAccess::llvm_rval(LLVMGenCtx& ctx) {
         string fptr = ctx.fresh("field.ptr");
         ctx.out << "  " << fptr << " = getelementptr %class." << cname
                 << ", ptr " << obj_ptr << ", i32 0, i32 " << (fidx + 2) << "\n";
-        if (ftype == VarType::CLASS || ftype == VarType::STRING || ftype == VarType::ARRAY) {
+        if (ftype == VarType::CLASS || ftype == VarType::STRING || ftype == VarType::ARRAY || ftype == VarType::POINTER) {
             string reg = ctx.fresh("field.ptr");
             ctx.out << "  " << reg << " = load ptr, ptr " << fptr << "\n";
             string r_i64 = ctx.fresh("field.i64");
@@ -2274,7 +2296,7 @@ string MemberAccess::llvm_rval(LLVMGenCtx& ctx) {
     VarType ftype = resolve_expr_type(ctx, this).base_type;
     string reg = ctx.fresh("struct.field");
     ctx.out << "  " << reg << " = load " << llvm_type_str(ftype) << ", ptr " << pointer->second << "\n";
-    if (ftype == VarType::CLASS || ftype == VarType::STRING || ftype == VarType::ARRAY) {
+    if (ftype == VarType::CLASS || ftype == VarType::STRING || ftype == VarType::ARRAY || ftype == VarType::POINTER) {
         string value = ctx.fresh("field.i64");
         ctx.out << "  " << value << " = ptrtoint ptr " << reg << " to i64\n";
         return value;
@@ -2382,7 +2404,7 @@ string Variable::llvm_rval(LLVMGenCtx& ctx) {
         throw CompileError(("undefined variable: " + _id).c_str());
     }
     VarType declared = llvm_declared_type(ctx);
-    if (declared == VarType::CLASS || declared == VarType::STRING || declared == VarType::ARRAY) {
+    if (declared == VarType::CLASS || declared == VarType::STRING || declared == VarType::ARRAY || declared == VarType::POINTER) {
         string reg = ctx.fresh(_id + ".ptr");
         ctx.out << "  " << reg << " = load ptr, ptr " << it->second << "\n";
         string int_reg = ctx.fresh(_id + ".i64");
@@ -2408,6 +2430,7 @@ string Variable::llvm_lval(LLVMGenCtx& ctx) {
 // ===== ArrayIndex =====
 
 VarType ArrayIndex::llvm_declared_type(LLVMGenCtx& ctx) const {
+    if (_pointer->llvm_declared_type(ctx) == VarType::POINTER) return VarType::LONG;
     const string& varname = _pointer->getVarName();
     if (ctx.array_var_typeinfo.count(varname)) {
         return ctx.array_var_typeinfo[varname].get_element_type().base_type;
@@ -2437,6 +2460,7 @@ VarType ArrayIndex::llvm_declared_type(LLVMGenCtx& ctx) const {
                         if (inner == "float") return VarType::FLOAT;
                         if (inner == "double") return VarType::DOUBLE;
                         if (inner == "string") return VarType::STRING;
+                        if (inner == "pointer") return VarType::POINTER;
                         return VarType::CLASS;
                     }
                 }
@@ -2581,17 +2605,19 @@ string CallFuncExp::llvm_rval(LLVMGenCtx& ctx) {
     // Prepare all args (emit conversions) before the call instruction
     auto prepared = prepareCallArgs(ctx, _id, _args);
     string reg = ctx.fresh("call");
+    string return_type = ctx.func_return_pointer.count(_id) ? "ptr" : "i64";
     bool is_imported = ctx.defined_funcs.find(_id) == ctx.defined_funcs.end();
     if (is_imported) {
-        ctx.out << "  " << reg << " = call i64 (...) @" << _id << "(";
+        ctx.out << "  " << reg << " = call " << return_type << " (...) @" << _id << "(";
     } else {
-        ctx.out << "  " << reg << " = call i64 @" << _id << "(";
+        ctx.out << "  " << reg << " = call " << return_type << " @" << _id << "(";
     }
     for (int i = 0; i < (int)prepared.size(); i++) {
         if (i > 0) ctx.out << ", ";
         ctx.out << prepared[i].first << " " << prepared[i].second;
     }
     ctx.out << ")\n";
+    if (return_type == "ptr") return llvm_to_canonical(ctx, reg, VarType::POINTER);
     return reg;
 }
 
@@ -2651,7 +2677,7 @@ string ClassInit::llvm_rval(LLVMGenCtx& ctx) {
             }
         } else if (is_float_type(cdef.fields[fi].type)) {
             ctx.out << "  store " << tstr << " 0.0, ptr " << fptr << "\n";
-        } else if (cdef.fields[fi].type == VarType::CLASS || cdef.fields[fi].type == VarType::STRING || cdef.fields[fi].type == VarType::ARRAY) {
+        } else if (cdef.fields[fi].type == VarType::CLASS || cdef.fields[fi].type == VarType::STRING || cdef.fields[fi].type == VarType::ARRAY || cdef.fields[fi].type == VarType::POINTER) {
             ctx.out << "  store ptr null, ptr " << fptr << "\n";
         } else {
             ctx.out << "  store " << tstr << " 0, ptr " << fptr << "\n";
@@ -2667,7 +2693,7 @@ string ClassInit::llvm_rval(LLVMGenCtx& ctx) {
             VarType ac = _args[i]->llvm_etype(ctx);
             if (i < (int)cdef.constructor->params.size()) {
                 VarType pt = cdef.constructor->params[i].second;
-                if (pt == VarType::CLASS || pt == VarType::STRING || pt == VarType::ARRAY) {
+                if (pt == VarType::CLASS || pt == VarType::STRING || pt == VarType::ARRAY || pt == VarType::POINTER) {
                     string r = ctx.fresh("ctor.ptr");
                     ctx.out << "  " << r << " = inttoptr i64 " << aval << " to ptr\n";
                     ctor_args.push_back({"ptr", r});
@@ -2737,7 +2763,8 @@ string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
         auto user_args = prepareCallArgs(ctx, def.name + "." + _method_name, _args);
         args.insert(args.end(), user_args.begin(), user_args.end());
         string result = ctx.fresh("struct.method");
-        string ret_llvm = is_float_type(method->second->ret_type) ? "double" : "i64";
+        string ret_llvm = method->second->ret_type == VarType::POINTER ? "ptr" :
+            (is_float_type(method->second->ret_type) ? "double" : "i64");
         ctx.out << "  " << result << " = call " << ret_llvm << " @" << def.name << "." << _method_name << "(";
         for (size_t i = 0; i < args.size(); ++i) {
             if (i) ctx.out << ", ";
@@ -2745,6 +2772,7 @@ string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
         }
         ctx.out << ")\n";
         release_class_owners(ctx, owners);
+        if (ret_llvm == "ptr") return llvm_to_canonical(ctx, result, VarType::POINTER);
         return result;
     }
 
@@ -2871,7 +2899,8 @@ string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
 
     // Build signature and call
     string ret_str = (minfo->ret_type == VarType::STRUCT) ? "void" :
-                     (is_float_type(minfo->ret_type) ? "double" : "i64");
+                     (minfo->ret_type == VarType::POINTER ? "ptr" :
+                      (is_float_type(minfo->ret_type) ? "double" : "i64"));
     string fn_sig = ret_str + " (ptr";
     for (auto* p : minfo->params) {
         fn_sig += ", " + llvm_type_str(p->getType());
@@ -2885,7 +2914,7 @@ string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
         VarType ac = _args[i]->llvm_etype(ctx);
         if (i < (int)minfo->params.size()) {
             VarType pt = minfo->params[i]->getType();
-            if (pt == VarType::CLASS || pt == VarType::STRING || pt == VarType::ARRAY) {
+            if (pt == VarType::CLASS || pt == VarType::STRING || pt == VarType::ARRAY || pt == VarType::POINTER) {
                 string r = ctx.fresh("arg.ptr");
                 ctx.out << "  " << r << " = inttoptr i64 " << aval << " to ptr\n";
                 call_args.push_back({"ptr", r});
@@ -2910,6 +2939,7 @@ string CallMethodExp::llvm_rval(LLVMGenCtx& ctx) {
 
     release_class_owners(ctx, owners);
     if (ret_str == "void") return "0";
+    if (ret_str == "ptr") return llvm_to_canonical(ctx, call_res, VarType::POINTER);
     return call_res;
 }
 
@@ -3126,7 +3156,7 @@ string SuperConstructorExp::llvm_rval(LLVMGenCtx &ctx) {
     for (int i = 0; i < (int)_args.size(); ++i) {
         string value = _args[i]->llvm_rval(ctx);
         VarType type = base.constructor->params[i].second;
-        if (type == VarType::CLASS || type == VarType::STRING || type == VarType::ARRAY) {
+        if (type == VarType::CLASS || type == VarType::STRING || type == VarType::ARRAY || type == VarType::POINTER) {
             string ptr = ctx.fresh("super.arg");
             ctx.out << "  " << ptr << " = inttoptr i64 " << value << " to ptr\n";
             value = ptr;
@@ -3146,4 +3176,8 @@ string SuperConstructorExp::llvm_rval(LLVMGenCtx &ctx) {
 
 void SuperConstructorExp::collect_strings(LLVMGenCtx &ctx) {
     for (auto arg : _args) arg->collect_strings(ctx);
+}
+
+VarType CallFuncExp::llvm_declared_type(LLVMGenCtx &ctx) const {
+    return ctx.func_return_pointer.count(_id) ? VarType::POINTER : VarType::LONG;
 }

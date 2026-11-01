@@ -6,6 +6,7 @@ static string vartype_name(VarType t) {
         case VarType::CHAR:   return "char";
         case VarType::INT:    return "int";
         case VarType::LONG:   return "long";
+        case VarType::POINTER: return "pointer";
         case VarType::FLOAT:  return "float";
         case VarType::DOUBLE: return "double";
         case VarType::STRING: return "string";

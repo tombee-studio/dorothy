@@ -25,6 +25,7 @@ static const char* vartype_name(VarType t) {
         case VarType::CHAR:     return "char";
         case VarType::INT:      return "int";
         case VarType::LONG:     return "long";
+        case VarType::POINTER:  return "pointer";
         case VarType::FLOAT:    return "float";
         case VarType::DOUBLE:   return "double";
         case VarType::STRING:   return "string";
@@ -1040,10 +1041,7 @@ void Access::compile(vector<Code>& ofs, map<string, int>& vars,
 
 void Access::lcompile(vector<Code>& ofs, map<string, int>& vars,
                       map<string, int>& functions, int offset) {
-    _rightside->lcompile(ofs, vars, functions, offset);
-    ofs.push_back(Code::makeCode(Code::POP, 2, 0));
-    ofs.push_back(Code::makeCode(Code::LOAD, 2, 2));
-    ofs.push_back(Code::makeCode(Code::PUSHR, 2, 0));
+    _rightside->compile(ofs, vars, functions, offset);
 }
 
 void Variable::print(ostream& os, int tab) { os << _id; }
