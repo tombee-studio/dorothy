@@ -10,7 +10,7 @@ abstract class Component {
     abstract func getName() -> string;
     abstract func init();
     abstract func update();
-    abstract func render(ren: long);
+    abstract func render(ren: pointer);
 }
 
 class Entity {
@@ -60,7 +60,7 @@ class Entity {
         }
     }
 
-    func render(ren: long) {
+    func render(ren: pointer) {
         if (this.active == 1) {
             var curr: Component? = this.firstComponent;
             while (curr != null) {
@@ -98,7 +98,7 @@ class Scene {
         }
     }
 
-    func render(ren: long) {
+    func render(ren: pointer) {
         var curr: Entity? = this.firstEntity;
         while (curr != null) {
             curr.render(ren);
@@ -108,7 +108,8 @@ class Scene {
 }
 
 // Helper: draw filled rectangle
-func glinda_draw_rect(ren: long, x: int, y: int, w: int, h: int, r: int, g: int, b: int, a: int) {
+func glinda_draw_rect(ren: pointer, x: int, y: int, w: int, h: int, r: int, g: int, b: int, a: int) {
+    if (ren == pointer.null) { return 0; }
     var rect: int[4];
     rect[0] = x;
     rect[1] = y;
@@ -118,9 +119,19 @@ func glinda_draw_rect(ren: long, x: int, y: int, w: int, h: int, r: int, g: int,
     SDL_RenderFillRect(ren, rect);
 }
 
+// SDL keyboard state contains bytes; raw pointer indexing reads long-sized values.
+func glinda_key_down(state: pointer, scancode: int) -> int {
+    if (state == pointer.null) { return 0; }
+    if (scancode < 0) { return 0; }
+    if (scancode >= 512) { return 0; }
+    var key: char = 0;
+    memcpy(&key, state + scancode, 1);
+    return key;
+}
+
 class GlindaApp {
-    var window: long;
-    var renderer: long;
+    var window: pointer;
+    var renderer: pointer;
     var running: int;
     var screenWidth: int;
     var screenHeight: int;
@@ -131,8 +142,8 @@ class GlindaApp {
     var bgB: int;
 
     constructor(w: int, h: int) {
-        this.window = 0;
-        this.renderer = 0;
+        this.window = pointer.null;
+        this.renderer = pointer.null;
         this.running = 0;
         this.screenWidth = w;
         this.screenHeight = h;
@@ -166,7 +177,7 @@ class GlindaApp {
         }
 
         this.window = SDL_CreateWindow(title, 100, 100, this.screenWidth, this.screenHeight, 4);
-        if (this.window == 0) {
+        if (this.window == pointer.null) {
             let err_win: string = "Glinda: Failed to create window: %s\n";
             printf(err_win, SDL_GetError());
             SDL_Quit();
@@ -174,9 +185,9 @@ class GlindaApp {
         }
 
         this.renderer = SDL_CreateRenderer(this.window, 0 - 1, 2);
-        if (this.renderer == 0) {
+        if (this.renderer == pointer.null) {
             this.renderer = SDL_CreateRenderer(this.window, 0 - 1, 0);
-            if (this.renderer == 0) {
+            if (this.renderer == pointer.null) {
                 let err_ren: string = "Glinda: Failed to create renderer: %s\n";
                 printf(err_ren, SDL_GetError());
                 SDL_DestroyWindow(this.window);
@@ -228,13 +239,13 @@ class GlindaApp {
     }
 
     func cleanup() {
-        if (this.renderer != 0) {
+        if (this.renderer != pointer.null) {
             SDL_DestroyRenderer(this.renderer);
-            this.renderer = 0;
+            this.renderer = pointer.null;
         }
-        if (this.window != 0) {
+        if (this.window != pointer.null) {
             SDL_DestroyWindow(this.window);
-            this.window = 0;
+            this.window = pointer.null;
         }
         SDL_Quit();
     }

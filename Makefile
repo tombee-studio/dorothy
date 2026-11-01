@@ -1,7 +1,7 @@
 GTEST_CFLAGS = $(shell pkg-config --cflags gtest)
 GTEST_LIBS   = $(shell pkg-config --libs gtest_main) -lpthread
 
-.PHONY: default setup lib cli test vscode
+.PHONY: default setup lib cli test vscode clean
 
 default: lib
 	sh install.sh
@@ -19,7 +19,7 @@ vscode:
 		@echo "Please reload or restart Visual Studio Code (Cmd+Shift+P -> Developer: Reload Window) to activate."
 
 
-test:
+test: | obj dist
 		g++ -c --std=c++17 src/code.cpp -o obj/code.o
 		g++ -c --std=c++17 src/cpu.cpp -o obj/cpu.o
 		g++ -c --std=c++17 src/lexer.cpp -o obj/lexer.o
@@ -31,6 +31,7 @@ test:
 		g++ --std=c++17 $(GTEST_CFLAGS) \
 			tests/gtest_code.cpp \
 			tests/gtest_lexer.cpp \
+			tests/gtest_pointer.cpp \
 			tests/gtest_parser.cpp \
 			tests/gtest_integration.cpp \
 			tests/gtest_struct.cpp \
@@ -45,7 +46,7 @@ test:
 			obj/*.o $(GTEST_LIBS) -o dist/test_runner
 		./dist/test_runner
 
-lib:
+lib: | obj Lib
 		g++ -c --std=c++17 src/code.cpp -o obj/code.o
 		g++ -c --std=c++17 src/cpu.cpp -o obj/cpu.o
 		g++ -c --std=c++17 src/lexer.cpp -o obj/lexer.o
@@ -55,6 +56,8 @@ lib:
 		g++ -c --std=c++17 src/typechecker.cpp -o obj/typechecker.o
 		g++ -c --std=c++17 src/null_safety.cpp -o obj/null_safety.o
 		ar -rcs Lib/libdorothy.a obj/*.o
+obj dist Lib:
+		mkdir -p $@
 
 clean:
 		rm -rf Lib obj dist

@@ -752,19 +752,21 @@ public:
 };
 
 class NullExp : public Expression {
+  VarType _null_type;
 public:
-  NullExp() {}
+  explicit NullExp(VarType null_type = VarType::CLASS) : _null_type(null_type) {}
+  VarType getNullType() const { return _null_type; }
 
   void print(ostream &os, int tab) override;
   void compile(vector<Code> &, map<string, int> &, map<string, int> &, int) override;
   void lcompile(vector<Code> &, map<string, int> &, map<string, int> &, int) override;
   string llvm_rval(LLVMGenCtx &) override;
-  VarType llvm_etype(LLVMGenCtx &) const override { return VarType::CLASS; }
-  VarType llvm_declared_type(LLVMGenCtx &) const override { return VarType::CLASS; }
-  VarType compile_type(map<string, int> &) const override { return VarType::CLASS; }
+  VarType llvm_etype(LLVMGenCtx &) const override { return _null_type; }
+  VarType llvm_declared_type(LLVMGenCtx &) const override { return _null_type; }
+  VarType compile_type(map<string, int> &) const override { return _null_type; }
   VarType static_type(const map<string, VarType> &,
                       const map<string, VarType> &) const override {
-    return VarType::CLASS;
+    return _null_type;
   }
 };
 
@@ -883,6 +885,10 @@ class Address : public Expression {
 
 public:
   vector<Expression *> children() const override { return {_exp}; }
+  VarType llvm_declared_type(LLVMGenCtx &) const override { return VarType::POINTER; }
+  VarType static_type(const map<string, VarType> &, const map<string, VarType> &) const override {
+    return VarType::POINTER;
+  }
   explicit Address(Expression *exp) : _exp(exp) {}
 
   virtual void print(ostream &, int tab);
@@ -962,6 +968,7 @@ public:
   void lcompile(vector<Code> &, map<string, int> &, map<string, int> &,
                 int) override;
   string llvm_rval(LLVMGenCtx &) override;
+  VarType llvm_declared_type(LLVMGenCtx &) const override;
   VarType
   static_type(const map<string, VarType> &,
               const map<string, VarType> &func_ret_types) const override {

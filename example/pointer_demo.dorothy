@@ -1,0 +1,30 @@
+// Built-in pointer primitive demo; main returns 0 when all checks pass.
+// VM: ./dist/dorothy example/pointer_demo.dorothy
+// Native: ./dist/dorothy --emit-llvm example/pointer_demo.dorothy > /tmp/pointer_demo.ll
+//         clang -Wno-override-module /tmp/pointer_demo.ll -o /tmp/pointer_demo
+//         /tmp/pointer_demo
+
+func identity(address: pointer) -> pointer {
+    return address;
+}
+
+func main() -> int {
+    var ptr: pointer;
+    if (ptr != pointer.null) { return 1; }
+    if (pointer.null != null) { return 2; }
+
+    var value: long = 41;
+    ptr = &value;
+    if (ptr == null) { return 3; }
+    *ptr = *ptr + 1;
+
+    var alias: pointer = identity(ptr);
+    if (alias == pointer.null) { return 4; }
+    if (*alias != 42) { return 5; }
+
+    ptr = pointer.null;
+    if (ptr != null) { return 6; }
+    // Resetting ptr does not change value or alias. Pointers do not own memory.
+    if (*alias != 42) { return 7; }
+    return 0;
+}

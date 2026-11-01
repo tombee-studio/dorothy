@@ -35,7 +35,7 @@ class TransformComponent: Component {
         this.y = this.y + this.vy;
     }
 
-    override func render(ren: long) {}
+    override func render(ren: pointer) {}
 }
 
 // ==========================================
@@ -59,7 +59,7 @@ class RectRendererComponent: Component {
     override func init() {}
     override func update() {}
 
-    override func render(ren: long) {
+    override func render(ren: pointer) {
         var entityRef: Entity? = this.entity;
         if (entityRef == null) { return 0; }
         let tName: string = "Transform";
@@ -93,21 +93,20 @@ class PaddleControllerComponent: Component {
     override func update() {
         var entityRef: Entity? = this.entity;
         if (entityRef == null) { return 0; }
-        var numkeys: int = 0;
-        let state: long = SDL_GetKeyboardState(numkeys);
-        if (state != 0) {
+        let state: pointer = SDL_GetKeyboardState(pointer.null);
+        if (state != pointer.null) {
             let tName: string = "Transform";
             var t: TransformComponent? = entityRef.getComponent(tName);
             if (t != null) {
                 // Left: 80, A: 4
                 var left_pressed: int = 0;
-                if (state[80] != 0) left_pressed = 1;
-                if (state[4] != 0) left_pressed = 1;
+                if (glinda_key_down(state, 80) != 0) left_pressed = 1;
+                if (glinda_key_down(state, 4) != 0) left_pressed = 1;
 
                 // Right: 79, D: 7
                 var right_pressed: int = 0;
-                if (state[79] != 0) right_pressed = 1;
-                if (state[7] != 0) right_pressed = 1;
+                if (glinda_key_down(state, 79) != 0) right_pressed = 1;
+                if (glinda_key_down(state, 7) != 0) right_pressed = 1;
 
                 if (left_pressed == 1) {
                     t.x = t.x - this.speed;
@@ -127,7 +126,7 @@ class PaddleControllerComponent: Component {
         }
     }
 
-    override func render(ren: long) {}
+    override func render(ren: pointer) {}
 }
 
 // ==========================================
@@ -152,7 +151,7 @@ class BlockComponent: Component {
 
     override func init() {}
     override func update() {}
-    override func render(ren: long) {}
+    override func render(ren: pointer) {}
 }
 
 // ==========================================
@@ -268,17 +267,16 @@ class GameManagerComponent: Component {
     override func update() {
         // Handle restart key 'R' (Scancode 21)
         if (this.gameState != 0) {
-            var numkeys: int = 0;
-            let state: long = SDL_GetKeyboardState(numkeys);
-            if (state != 0) {
-                if (state[21] != 0) {
+            let state: pointer = SDL_GetKeyboardState(pointer.null);
+            if (state != pointer.null) {
+                if (glinda_key_down(state, 21) != 0) {
                     this.restart();
                 }
             }
         }
     }
 
-    override func render(ren: long) {
+    override func render(ren: pointer) {
         // Draw walls / borders (Slate: 51, 65, 85)
         glinda_draw_rect(ren, 0, 0, 640, 10, 51, 65, 85, 255);
         glinda_draw_rect(ren, 0, 0, 10, 480, 51, 65, 85, 255);
@@ -413,7 +411,7 @@ class BallPhysicsComponent: Component {
         }
     }
 
-    override func render(ren: long) {}
+    override func render(ren: pointer) {}
 }
 
 // ==========================================

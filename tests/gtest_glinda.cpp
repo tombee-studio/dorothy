@@ -68,6 +68,34 @@ static int run_llvm(const std::string &source) {
   return exit_code;
 }
 
+TEST(GlindaTest, KeyboardPointerReadsSingleBytes) {
+  std::ifstream input("frameworks/glinda/glinda.dorothy");
+  ASSERT_TRUE(input.is_open());
+  std::string framework((std::istreambuf_iterator<char>(input)),
+                        std::istreambuf_iterator<char>());
+  auto start = framework.find("func glinda_key_down(");
+  auto end = framework.find("\n}\n", start);
+  ASSERT_NE(start, std::string::npos);
+  ASSERT_NE(end, std::string::npos);
+  auto helper = framework.substr(start, end + 3 - start);
+  EXPECT_EQ(run_llvm("import \"string.h\";\n" + helper + R"(
+    func main() -> int {
+      var keys: char[512];
+      keys[4] = 1;
+      keys[5] = 0;
+      keys[511] = 1;
+      var state: pointer = &keys[0];
+      if (glinda_key_down(pointer.null, 4) != 0) { return 1; }
+      if (glinda_key_down(state, 4) != 1) { return 2; }
+      if (glinda_key_down(state, 5) != 0) { return 3; }
+      if (glinda_key_down(state, 511) != 1) { return 4; }
+      if (glinda_key_down(state, 512) != 0) { return 5; }
+      if (glinda_key_down(state, 0 - 1) != 0) { return 6; }
+      return 0;
+    }
+  )"), 0);
+}
+
 // 1. Componentの基本ライフサイクル（init, update, render）の動作検証
 TEST(GlindaTest, ComponentLifecycle) {
   std::string src =
@@ -78,7 +106,7 @@ TEST(GlindaTest, ComponentLifecycle) {
       "    abstract func getName() -> long;\n"
       "    abstract func init();\n"
       "    abstract func update();\n"
-      "    abstract func render(ren: long);\n"
+      "    abstract func render(ren: pointer);\n"
       "}\n"
       "class Entity {\n"
       "    var active: int;\n"
@@ -111,7 +139,7 @@ TEST(GlindaTest, ComponentLifecycle) {
       "            }\n"
       "        }\n"
       "    }\n"
-      "    func render(ren: long) {\n"
+      "    func render(ren: pointer) {\n"
       "        if (this.active == 1) {\n"
       "            var curr: Component? = this.firstComponent;\n"
       "            while (curr != null) {\n"
@@ -140,7 +168,7 @@ TEST(GlindaTest, ComponentLifecycle) {
       "    override func update() {\n"
       "        this.updateCount = this.updateCount + 1;\n"
       "    }\n"
-      "    override func render(ren: long) {\n"
+      "    override func render(ren: pointer) {\n"
       "        this.renderCount = this.renderCount + 1;\n"
       "    }\n"
       "}\n"
@@ -150,7 +178,7 @@ TEST(GlindaTest, ComponentLifecycle) {
       "    e.addComponent(m);\n"
       "    e.update();\n"
       "    e.update();\n"
-      "    e.render(0);\n"
+      "    e.render(pointer.null);\n"
       "    // initCount=1, updateCount=2, renderCount=1 -> 1*100 + 2*10 + 1 = "
       "121\n"
       "    return m.initCount * 100 + m.updateCount * 10 + m.renderCount;\n"
@@ -168,7 +196,7 @@ TEST(GlindaTest, GetComponentByName) {
       "    abstract func getName() -> long;\n"
       "    abstract func init();\n"
       "    abstract func update();\n"
-      "    abstract func render(ren: long);\n"
+      "    abstract func render(ren: pointer);\n"
       "}\n"
       "class Entity {\n"
       "    var active: int;\n"
@@ -204,7 +232,7 @@ TEST(GlindaTest, GetComponentByName) {
       "        return null;\n"
       "    }\n"
       "    func update() {}\n"
-      "    func render(ren: long) {}\n"
+      "    func render(ren: pointer) {}\n"
       "}\n"
       "class PositionComponent: Component {\n"
       "    var x: int;\n"
@@ -219,7 +247,7 @@ TEST(GlindaTest, GetComponentByName) {
       "    }\n"
       "    override func init() {}\n"
       "    override func update() {}\n"
-      "    override func render(ren: long) {}\n"
+      "    override func render(ren: pointer) {}\n"
       "}\n"
       "class HealthComponent: Component {\n"
       "    var hp: int;\n"
@@ -232,7 +260,7 @@ TEST(GlindaTest, GetComponentByName) {
       "    }\n"
       "    override func init() {}\n"
       "    override func update() {}\n"
-      "    override func render(ren: long) {}\n"
+      "    override func render(ren: pointer) {}\n"
       "}\n"
       "func main() -> int {\n"
       "    var e: Entity = Entity();\n"
@@ -261,7 +289,7 @@ TEST(GlindaTest, InterComponentAccessViaEntity) {
       "    abstract func getName() -> long;\n"
       "    abstract func init();\n"
       "    abstract func update();\n"
-      "    abstract func render(ren: long);\n"
+      "    abstract func render(ren: pointer);\n"
       "}\n"
       "class Entity {\n"
       "    var active: int;\n"
@@ -303,7 +331,7 @@ TEST(GlindaTest, InterComponentAccessViaEntity) {
       "            curr = curr.next;\n"
       "        }\n"
       "    }\n"
-      "    func render(ren: long) {}\n"
+      "    func render(ren: pointer) {}\n"
       "}\n"
       "class TransformComponent: Component {\n"
       "    var x: int;\n"
@@ -318,7 +346,7 @@ TEST(GlindaTest, InterComponentAccessViaEntity) {
       "    }\n"
       "    override func init() {}\n"
       "    override func update() {}\n"
-      "    override func render(ren: long) {}\n"
+      "    override func render(ren: pointer) {}\n"
       "}\n"
       "class MovementComponent: Component {\n"
       "    var speedX: int;\n"
@@ -342,7 +370,7 @@ TEST(GlindaTest, InterComponentAccessViaEntity) {
       "            t.y = t.y + this.speedY;\n"
       "        }\n"
       "    }\n"
-      "    override func render(ren: long) {}\n"
+      "    override func render(ren: pointer) {}\n"
       "}\n"
       "func main() -> int {\n"
       "    var e: Entity = Entity();\n"
@@ -368,7 +396,7 @@ TEST(GlindaTest, SceneEntityBatchExecution) {
       "    abstract func getName() -> long;\n"
       "    abstract func init();\n"
       "    abstract func update();\n"
-      "    abstract func render(ren: long);\n"
+      "    abstract func render(ren: pointer);\n"
       "}\n"
       "class Entity {\n"
       "    var active: int;\n"
@@ -399,7 +427,7 @@ TEST(GlindaTest, SceneEntityBatchExecution) {
       "            curr = curr.next;\n"
       "        }\n"
       "    }\n"
-      "    func render(ren: long) {}\n"
+      "    func render(ren: pointer) {}\n"
       "}\n"
       "class CounterComponent: Component {\n"
       "    var val: int;\n"
@@ -414,7 +442,7 @@ TEST(GlindaTest, SceneEntityBatchExecution) {
       "    override func update() {\n"
       "        this.val = this.val + 1;\n"
       "    }\n"
-      "    override func render(ren: long) {}\n"
+      "    override func render(ren: pointer) {}\n"
       "}\n"
       "class Scene {\n"
       "    var firstEntity: Entity?;\n"
@@ -439,7 +467,7 @@ TEST(GlindaTest, SceneEntityBatchExecution) {
       "            curr = curr.next;\n"
       "        }\n"
       "    }\n"
-      "    func render(ren: long) {}\n"
+      "    func render(ren: pointer) {}\n"
       "}\n"
       "func main() -> int {\n"
       "    var scene: Scene = Scene();\n"

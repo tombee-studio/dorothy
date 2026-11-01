@@ -112,10 +112,43 @@ var pi = 3.14159;       // inferred as double
 | `char` | 1 byte | `i8` | 8-bit integer |
 | `int` | 4 bytes | `i32` | 32-bit integer |
 | `long` | 8 bytes | `i64` | 64-bit integer |
+| `pointer` | Address-sized | `ptr` | Unowned raw address; defaults to `null` |
 | `float` | 4 bytes | `float` | Single-precision floating point |
 | `double` | 8 bytes | `double` | Double-precision floating point |
 | `string` | Pointer | `ptr` | Dynamically allocated null-terminated string |
 | `Array<T>` / `T[]` | Pointer | `ptr` | Dynamic heap-allocated array with element type `T` |
+
+#### Raw pointers (`pointer`)
+
+`pointer` is a built-in primitive type, distinct from `long` and class references.
+It is nullable without a `?` suffix. `pointer.null` and `null` denote the same
+null value: both can be assigned to a pointer and compare equal, and
+`pointer.null` can also initialize a nullable class reference.
+
+```dorothy
+var ptr: pointer;               // defaults to null
+var value: long = 41;
+ptr = &value;
+if (ptr != pointer.null) {
+    *ptr = *ptr + 1;            // value becomes 42
+}
+ptr = null;                    // equivalent to ptr = pointer.null
+```
+
+Pointers can be passed to and returned from functions and methods, stored in
+fields or `Array<pointer>`, and passed to imported C functions. Inferred
+`var ptr = pointer.null;` also has type `pointer`. The LLVM backend uses native
+`ptr` storage, parameters, and return values; the VM uses its own memory addresses.
+
+An unchecked nullable pointer dereference is rejected by static null analysis.
+`*ptr` uses the existing raw `long`-sized read/write operation, so use a `long`
+pointee for this operation. Pointee types, bounds, lifetime, and memory ownership
+are not tracked: pointers do not retain class instances or automatically free
+foreign allocations. Arbitrary numbers are not implicitly pointers; use `&value`
+or a C pointer-returning function to obtain an address.
+
+See [example/pointer_demo.dorothy](example/pointer_demo.dorothy) for a sample that
+runs in both the VM and LLVM targets.
 
 #### Strings (`string`)
 Dorothy supports native heap-allocated string operations:
@@ -209,7 +242,7 @@ and check that local before use. Empty array literals can be given an explicit
 reference element type, such as `var players: Array<Player> = [];`.
 
 The analysis is conservative: code it cannot prove safe is rejected. Runtime null
-guards remain as defense in depth. Raw numeric pointers, pointer dereferences,
+guards remain as defense in depth. Raw numeric addresses stored in `long`, pointer bounds/lifetimes,
 and memory modified by imported C code are outside managed-reference analysis;
 they retain the existing low-level interop semantics. Classes continue to require
 the LLVM target.
@@ -387,6 +420,13 @@ for (i = 0; i < 10; i = i + 1) {
 ## Glinda Framework
 
 Glinda is an Entity-Component System (ECS) framework for Dorothy that enables building 2D games and interactive graphical applications using SDL2.
+
+SDL window and renderer handles use `pointer`, and component render methods
+override `render(ren: pointer)`. Check handles against `pointer.null`; Glinda
+explicitly destroys SDL resources and resets the handles during cleanup.
+Keyboard examples obtain `SDL_GetKeyboardState(pointer.null)` as a `pointer`
+and use `glinda_key_down(state, scancode)` to read individual bytes. Raw pointer
+indexing reads `long`-sized values and should not be used for SDL's byte array.
 
 ### Prerequisites & Installation
 

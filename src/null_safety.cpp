@@ -3,10 +3,10 @@
 
 namespace {
 bool reference(VarType t) {
-    return t == VarType::CLASS || t == VarType::ARRAY || t == VarType::STRING;
+    return t == VarType::CLASS || t == VarType::ARRAY || t == VarType::STRING || t == VarType::POINTER;
 }
 TypeInfo type(VarType t, string name = "", bool nullable = false) {
-    return TypeInfo{t, name, nullable, {}};
+    return TypeInfo{t, name, nullable || t == VarType::POINTER, {}};
 }
 TypeInfo declared(const DeclVar *d) {
     auto t = d->getTypeInfo();
@@ -147,7 +147,13 @@ class NullChecker {
     }
     Value expr(const Expression *e, Flow &f, const TypeInfo *expected = nullptr) {
         if (!e) return {type(VarType::LONG)};
-        if (dynamic_cast<const NullExp *>(e)) return {type(VarType::CLASS, "", true), false, true};
+        if (auto n = dynamic_cast<const NullExp *>(e)) return {type(n->getNullType(), "", true), false, true};
+        if (auto address = dynamic_cast<const Address *>(e)) {
+            auto target = address->children().front();
+            if (auto member_expr = dynamic_cast<MemberAccess *>(target)) member(member_expr, f, true);
+            else if (!dynamic_cast<Variable *>(target)) expr(target, f);
+            return {type(VarType::POINTER), true};
+        }
         if (dynamic_cast<const ThisExpr *>(e)) {
             if (constructor) {
                 initialized(f);
@@ -242,9 +248,12 @@ class NullChecker {
             }
             for (auto arg : c->getArgs()) {
                 auto v = expr(arg, f);
-                if (reference(v.type.base_type)) demand(v, "argument to external function " + c->getId());
+                if (!v.null_literal && reference(v.type.base_type) && v.type.base_type != VarType::POINTER)
+                    demand(v, "argument to external function " + c->getId());
             }
             invalidate(f);
+            if (expected && expected->base_type == VarType::POINTER)
+                return {type(VarType::POINTER), false}; // foreign return may be a null address
             return {type(VarType::LONG)};
         }
         if (auto c = dynamic_cast<const CallMethodExp *>(e)) {
@@ -313,6 +322,8 @@ class NullChecker {
             if (!comparison && value.null_literal) error("null is only valid as a nullable reference or in a null comparison");
             if (!i) left = value;
         }
+        if ((dynamic_cast<const AddExp *>(e) || dynamic_cast<const SubExp *>(e)) &&
+            left.type.base_type == VarType::POINTER) return left;
         if (dynamic_cast<const StringExp *>(e)) return {type(VarType::STRING)};
         if (dynamic_cast<const AddExp *>(e) && left.type.base_type == VarType::STRING) return left;
         if (dynamic_cast<const FloatExp *>(e)) return {type(VarType::DOUBLE)};
@@ -397,7 +408,8 @@ class NullChecker {
             if (auto init = dynamic_cast<InitializedDeclVar *>(decl)) {
                 auto v = expr(init->getInit(), f, t.base_type == VarType::INFERRED ? nullptr : &t);
                 if (t.base_type == VarType::INFERRED) {
-                    if (v.null_literal) error("cannot infer a type from null; declare an explicit nullable type");
+                    if (v.null_literal && v.type.base_type != VarType::POINTER)
+                        error("cannot infer a type from null; declare an explicit nullable type");
                     t = v.type;
                     t.is_nullable = !v.nonnull;
                     auto previous = inferred.find(decl);
@@ -510,6 +522,7 @@ public:
                 if (t.base_type == VarType::ARRAY) {
                     auto element = t.get_element_type();
                     string element_name = element.type_name;
+                    if (element.base_type == VarType::POINTER) element_name = "pointer";
                     if (element_name.empty()) element_name = element.base_type == VarType::STRING ? "string" : "long";
                     name = "Array<" + element_name + ">";
                 }

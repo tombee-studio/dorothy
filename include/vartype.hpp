@@ -13,6 +13,7 @@ enum class VarType {
     STRUCT,   // user-defined struct type
     CLASS,    // user-defined class type (reference semantics, pointer)
     ARRAY,    // dynamic array (Array<T> / T[], pointer)
+    POINTER,  // unowned raw address; null is a valid value
     INFERRED, // placeholder for type inference; resolved in llvm_emit
 };
 
@@ -39,6 +40,7 @@ inline std::string llvm_type_str(VarType t) {
         case VarType::LONG:     return "i64";
         case VarType::FLOAT:    return "float";
         case VarType::DOUBLE:   return "double";
+        case VarType::POINTER:  return "ptr";
         case VarType::STRING:   return "ptr";
         case VarType::STRUCT:   return "ptr";
         case VarType::CLASS:    return "ptr";

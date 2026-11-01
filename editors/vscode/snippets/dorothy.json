@@ -210,7 +210,7 @@
       "\t\t${5}",
       "\t}",
       "",
-      "\toverride func render(ren: long) {",
+      "\toverride func render(ren: pointer) {",
       "\t\t${0}",
       "\t}",
       "}"
@@ -297,16 +297,15 @@
   "SDL Get Keyboard State": {
     "prefix": "sdl-keyboard-state",
     "body": [
-      "var numkeys: int = 0;",
-      "let keyState: long = SDL_GetKeyboardState(numkeys);",
-      "if (keyState != 0) {",
+      "let keyState: pointer = SDL_GetKeyboardState(pointer.null);",
+      "if (keyState != pointer.null) {",
       "\t// Left arrow: 80, Right arrow: 79, Space: 44",
-      "\tif (keyState[${1:80}] != 0) {",
+      "\tif (glinda_key_down(keyState, ${1:80}) != 0) {",
       "\t\t${0}",
       "\t}",
       "}"
     ],
-    "description": "SDL2 keyboard state polling"
+    "description": "SDL2 keyboard state polling (requires Glinda's glinda_key_down helper)"
   },
   "SDL Set Draw Color": {
     "prefix": "sdl-set-color",
@@ -351,8 +350,8 @@
   "SDL Create Window & Renderer": {
     "prefix": "sdl-create-window-renderer",
     "body": [
-      "var window: long = SDL_CreateWindow(\"${1:Window Title}\", 100, 100, ${2:640}, ${3:480}, 4);",
-      "var renderer: long = SDL_CreateRenderer(window, 0 - 1, 2);"
+      "var window: pointer = SDL_CreateWindow(\"${1:Window Title}\", 100, 100, ${2:640}, ${3:480}, 4);",
+      "var renderer: pointer = SDL_CreateRenderer(window, 0 - 1, 2);"
     ],
     "description": "Create SDL2 window and renderer"
   },
