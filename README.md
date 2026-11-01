@@ -421,6 +421,13 @@ for (i = 0; i < 10; i = i + 1) {
 
 Glinda is an Entity-Component System (ECS) framework for Dorothy that enables building 2D games and interactive graphical applications using SDL2.
 
+SDL window and renderer handles use `pointer`, and component render methods
+override `render(ren: pointer)`. Check handles against `pointer.null`; Glinda
+explicitly destroys SDL resources and resets the handles during cleanup.
+Keyboard examples obtain `SDL_GetKeyboardState(pointer.null)` as a `pointer`
+and use `glinda_key_down(state, scancode)` to read individual bytes. Raw pointer
+indexing reads `long`-sized values and should not be used for SDL's byte array.
+
 ### Prerequisites & Installation
 
 To run Glinda applications, install SDL2 and pkg-config:

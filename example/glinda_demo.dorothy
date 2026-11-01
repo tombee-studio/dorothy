@@ -35,7 +35,7 @@ class TransformComponent: Component {
         this.y = this.y + this.vy;
     }
 
-    override func render(ren: long) {}
+    override func render(ren: pointer) {}
 }
 
 // ==========================================
@@ -59,7 +59,7 @@ class RectRendererComponent: Component {
     override func init() {}
     override func update() {}
 
-    override func render(ren: long) {
+    override func render(ren: pointer) {
         var entityRef: Entity? = this.entity;
         if (entityRef == null) { return 0; }
         let tName: string = "Transform";
@@ -121,7 +121,7 @@ class BouncingPhysicsComponent: Component {
         }
     }
 
-    override func render(ren: long) {}
+    override func render(ren: pointer) {}
 }
 
 // ==========================================
@@ -145,21 +145,20 @@ class PlayerControllerComponent: Component {
     override func update() {
         var entityRef: Entity? = this.entity;
         if (entityRef == null) { return 0; }
-        var numkeys: int = 0;
-        let state: long = SDL_GetKeyboardState(numkeys);
-        if (state != 0) {
+        let state: pointer = SDL_GetKeyboardState(pointer.null);
+        if (state != pointer.null) {
             let tName: string = "Transform";
             var t: TransformComponent? = entityRef.getComponent(tName);
             if (t != null) {
                 // SDL_SCANCODE_LEFT = 80, SDL_SCANCODE_A = 4
                 var left_pressed: int = 0;
-                if (state[80] != 0) left_pressed = 1;
-                if (state[4] != 0) left_pressed = 1;
+                if (glinda_key_down(state, 80) != 0) left_pressed = 1;
+                if (glinda_key_down(state, 4) != 0) left_pressed = 1;
 
                 // SDL_SCANCODE_RIGHT = 79, SDL_SCANCODE_D = 7
                 var right_pressed: int = 0;
-                if (state[79] != 0) right_pressed = 1;
-                if (state[7] != 0) right_pressed = 1;
+                if (glinda_key_down(state, 79) != 0) right_pressed = 1;
+                if (glinda_key_down(state, 7) != 0) right_pressed = 1;
 
                 if (left_pressed == 1) {
                     t.x = t.x - this.speed;
@@ -175,7 +174,7 @@ class PlayerControllerComponent: Component {
         }
     }
 
-    override func render(ren: long) {}
+    override func render(ren: pointer) {}
 }
 
 // ==========================================
